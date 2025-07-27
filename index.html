@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Gemini Messenger</title>
+    <style>
+      /* For custom scrollbars */
+      ::-webkit-scrollbar {
+        width: 8px;
+      }
+      ::-webkit-scrollbar-track {
+        background: #f8fafc; /* slate-50 */
+      }
+      .dark ::-webkit-scrollbar-track {
+        background: #0f172a; /* slate-900 */
+      }
+      .dark.midnight ::-webkit-scrollbar-track {
+        background: #1e293b; /* slate-800 */
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #cbd5e1; /* slate-300 */
+        border-radius: 4px;
+      }
+      .dark ::-webkit-scrollbar-thumb {
+        background: #475569; /* slate-600 */
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: #94a3b8; /* slate-400 */
+      }
+      .dark ::-webkit-scrollbar-thumb:hover {
+        background: #334155; /* slate-700 */
+      }
+
+      @keyframes fade-in {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
+      @keyframes slide-up {
+        from { transform: translateY(20px) scale(0.98); opacity: 0; }
+        to { transform: translateY(0) scale(1); opacity: 1; }
+      }
+      
+      /* For mention input */
+      .chat-input-container {
+        position: relative;
+        flex: 1;
+        display: grid;
+      }
+      .chat-input-backdrop, .chat-input {
+        grid-area: 1 / 1 / 2 / 2;
+        padding: 0.75rem; /* p-3 */
+        font-size: 1rem;
+        line-height: 1.5;
+        border-radius: 0.5rem; /* rounded-lg */
+        border: 1px solid;
+        min-height: 50px; /* match button height */
+        max-height: 120px;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        overflow-y: auto;
+      }
+      .chat-input {
+        color: transparent;
+        caret-color: #334155; /* slate-700 */
+        background: transparent;
+        z-index: 1;
+        resize: none;
+      }
+      .dark .chat-input {
+        caret-color: #e2e8f0; /* slate-200 */
+      }
+      .chat-input:focus {
+        outline: none;
+      }
+      .chat-input-backdrop {
+        pointer-events: none;
+      }
+      .mention-highlight {
+        color: #4f46e5; /* indigo-600 */
+        font-weight: 600;
+        background-color: rgba(99, 102, 241, 0.1);
+        border-radius: 4px;
+        padding: 0 2px;
+      }
+      .dark .mention-highlight {
+        color: #818cf8; /* indigo-400 */
+        background-color: rgba(129, 140, 248, 0.15);
+      }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@^19.1.0",
+    "react-dom/": "https://esm.sh/react-dom@^19.1.0/",
+    "react/": "https://esm.sh/react@^19.1.0/",
+    "@google/genai": "https://esm.sh/@google/genai@^1.11.0",
+    "mqtt": "https://esm.sh/mqtt@^5.13.3",
+    "@testing-library/jest-dom": "https://esm.sh/@testing-library/jest-dom@^6.6.4",
+    "@testing-library/react": "https://esm.sh/@testing-library/react@^16.3.0"
+  }
+}
+</script>
+<link rel="stylesheet" href="/index.css">
+</head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+</body>
+</html>
