@@ -1,0 +1,170 @@
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Max-Age': '86400',
+}
+
+serve(async (req) => {
+  // Handle CORS preflight requests
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders })
+  }
+
+  try {
+    const { email, inviterName, inviterId } = await req.json()
+
+    // Create Supabase admin client
+    const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+
+    if (!supabaseUrl || !supabaseServiceKey) {
+      console.error('Missing environment variables: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY');
+      return new Response(
+        JSON.stringify({
+          success: false,
+          message: 'Server configuration error',
+          error: 'MISSING_ENV_VARS'
+        }),
+        {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 500
+        }
+      );
+    }
+
+    console.log('Creating admin client with URL:', supabaseUrl);
+
+    const supabaseAdmin = createClient(
+      supabaseUrl,
+      supabaseServiceKey,
+      {
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false
+        },
+        global: {
+          headers: {
+            Authorization: `Bearer ${supabaseServiceKey}`
+          }
+        }
+      }
+    )
+
+    // Check if user already exists
+    const { data: existingUsers } = await supabaseAdmin
+      .from('User')
+      .select('id')
+      .eq('email', email)
+      .limit(1)
+
+    if (existingUsers && existingUsers.length > 0) {
+      return new Response(
+        JSON.stringify({ 
+          success: false, 
+          message: 'User already exists. Please send a friend request instead.',
+          error: 'USER_EXISTS'
+        }),
+        { 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 400
+        }
+      )
+    }
+
+    // Store invitation record
+    const now = new Date().toISOString();
+    const { error: inviteError } = await supabaseAdmin
+      .from('Invitation')
+      .insert({
+        email: email,
+        inviterId: inviterId,
+        inviterName: inviterName,
+        status: 'pending',
+        createdAt: now,
+        updatedAt: now
+      })
+
+    if (inviteError) {
+      console.error('Error creating invitation:', inviteError)
+      return new Response(
+        JSON.stringify({ 
+          success: false, 
+          message: 'Error storing invitation',
+          error: inviteError.message
+        }),
+        { 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 500
+        }
+      )
+    }
+
+    // Send invitation email using Supabase Auth
+    const { data, error } = await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
+      redirectTo: `${Deno.env.get('SITE_URL')}/auth/callback?invited_by=${inviterName}`,
+      data: {
+        inviter_name: inviterName,
+        inviter_id: inviterId,
+        invitation_type: 'friend_invite'
+      }
+    })
+
+    if (error) {
+      console.error('Error sending invitation email:', error)
+      
+      // Update invitation status to failed
+      await supabaseAdmin
+        .from('Invitation')
+        .update({ 
+          status: 'failed',
+          updatedAt: new Date().toISOString()
+        })
+        .eq('email', email)
+        .eq('inviterId', inviterId)
+
+      return new Response(
+        JSON.stringify({ 
+          success: false, 
+          message: 'Error sending invitation email',
+          error: error.message
+        }),
+        { 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 500
+        }
+      )
+    }
+
+    console.log('Invitation sent successfully:', data)
+
+    return new Response(
+      JSON.stringify({ 
+        success: true, 
+        message: `Invitation sent to ${email}`,
+        data: data
+      }),
+      { 
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 200
+      }
+    )
+
+  } catch (error) {
+    console.error('Error in send-invitation function:', error)
+    return new Response(
+      JSON.stringify({ 
+        success: false, 
+        message: 'Internal server error',
+        error: error.message
+      }),
+      { 
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 500
+      }
+    )
+  }
+})

@@ -1,272 +1,299 @@
-import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { useAuth } from '../../contexts/AuthContext';
-import { Button } from '../ui/button';
-import { Input } from '../ui/input';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '../ui/card';
-import { Label } from '../ui/label';
-import { Alert, AlertDescription } from '../ui/alert';
-import { Checkbox } from '../ui/checkbox';
-import { Loader2, User, Mail, Lock, Eye, EyeOff } from 'lucide-react';
+import { MessagesSquare, Sparkles, Shield, Zap, Users } from "lucide-react";
+import { SignupForm } from "@/components/signup-form";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { motion, AnimatePresence } from "motion/react";
+import { useState, useEffect } from "react";
 
-const RegisterPage: React.FC = () => {
-  const { register, loading } = useAuth();
-  const [formData, setFormData] = useState({
-    name: '',
-    email: '',
-    password: '',
-    confirmPassword: ''
-  });
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const [acceptedTerms, setAcceptedTerms] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+export default function SignUp() {
+  const features = [
+    {
+      icon: Users,
+      title: "Join the Community",
+      description: "Connect with a vibrant global community of millions of users who share your passion for meaningful conversations and instant connectivity.",
+      color: "text-blue-400",
+      bgColor: "bg-blue-500/20",
+    },
+    {
+      icon: Shield,
+      title: "Privacy Protected",
+      description: "Your personal data and conversations are protected with military-grade end-to-end encryption, ensuring complete privacy and security at all times.",
+      color: "text-emerald-400",
+      bgColor: "bg-emerald-500/20",
+    },
+    {
+      icon: Zap,
+      title: "Lightning Fast",
+      description: "Experience blazing-fast messaging with zero lag and instant delivery, powered by our cutting-edge infrastructure and optimized protocols.",
+      color: "text-yellow-400",
+      bgColor: "bg-yellow-500/20",
+    },
+    {
+      icon: Sparkles,
+      title: "AI-Powered",
+      description: "Leverage advanced artificial intelligence for smart reply suggestions, real-time language translation, and context-aware conversation enhancements.",
+      color: "text-purple-400",
+      bgColor: "bg-purple-500/20",
+    },
+  ];
 
-  const validateForm = () => {
-    const newErrors: Record<string, string> = {};
+  const testimonials = [
+    {
+      name: "Sarah Chen",
+      role: "Product Designer",
+      content: "Relay has revolutionized how I communicate with my team. The AI features are incredibly intuitive!",
+      avatar: "https://images.unsplash.com/photo-1494790108755-2616b612b786?w=64&h=64&fit=crop&crop=face",
+      rating: 5
+    },
+    {
+      name: "Marcus Rodriguez",
+      role: "Software Engineer",
+      content: "The privacy-first approach and lightning-fast performance make Relay my go-to messaging app.",
+      avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=64&h=64&fit=crop&crop=face",
+      rating: 5
+    },
+    {
+      name: "Emily Johnson",
+      role: "Marketing Director",
+      content: "The cross-device sync is seamless. I can start a conversation on my phone and continue on my laptop effortlessly.",
+      avatar: "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=64&h=64&fit=crop&crop=face",
+      rating: 5
+    },
+  ];
 
-    if (!formData.name.trim()) {
-      newErrors.name = 'Name is required';
-    } else if (formData.name.trim().length < 2) {
-      newErrors.name = 'Name must be at least 2 characters';
-    }
+  const [currentFeatureIndex, setCurrentFeatureIndex] = useState(0);
+  const [isPaused, setIsPaused] = useState(false);
+  const [currentTestimonialIndex, setCurrentTestimonialIndex] = useState(0);
 
-    if (!formData.email) {
-      newErrors.email = 'Email is required';
-    } else if (!/\S+@\S+\.\S+/.test(formData.email)) {
-      newErrors.email = 'Email is invalid';
-    }
+  useEffect(() => {
+    if (isPaused) return;
 
-    if (!formData.password) {
-      newErrors.password = 'Password is required';
-    } else if (formData.password.length < 6) {
-      newErrors.password = 'Password must be at least 6 characters';
-    }
+    const interval = setInterval(() => {
+      setCurrentFeatureIndex((prev) => (prev + 1) % features.length);
+    }, 3000); // Change feature every 3 seconds
 
-    if (!formData.confirmPassword) {
-      newErrors.confirmPassword = 'Please confirm your password';
-    } else if (formData.password !== formData.confirmPassword) {
-      newErrors.confirmPassword = 'Passwords do not match';
-    }
+    return () => clearInterval(interval);
+  }, [features.length, isPaused]);
 
-    if (!acceptedTerms) {
-      newErrors.terms = 'You must accept the terms and conditions';
-    }
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentTestimonialIndex((prev) => (prev + 1) % testimonials.length);
+    }, 4000); // Change testimonial every 4 seconds
 
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!validateForm()) return;
-
-    setIsSubmitting(true);
-    setErrors({});
-
-    const result = await register(formData.name.trim(), formData.email, formData.password);
-    
-    if (!result.success) {
-      setErrors({ general: result.error || 'Registration failed' });
-    }
-    
-    setIsSubmitting(false);
-  };
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({
-      ...prev,
-      [name]: value
-    }));
-    
-    // Clear errors when user starts typing
-    if (errors[name]) {
-      setErrors(prev => ({
-        ...prev,
-        [name]: ''
-      }));
-    }
-  };
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900">
-        <Loader2 className="h-8 w-8 animate-spin text-indigo-600" />
-      </div>
-    );
-  }
+    return () => clearInterval(interval);
+  }, [testimonials.length]);
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900 p-4">
-      <Card className="w-full max-w-md">
-        <CardHeader className="space-y-1">
-          <CardTitle className="text-2xl font-bold text-center">Create account</CardTitle>
-          <CardDescription className="text-center">
-            Enter your information to create your account
-          </CardDescription>
-        </CardHeader>
-        
-        <form onSubmit={handleSubmit}>
-          <CardContent className="space-y-4">
-            {errors.general && (
-              <Alert variant="destructive">
-                <AlertDescription>{errors.general}</AlertDescription>
-              </Alert>
-            )}
-
-            <div className="space-y-2">
-              <Label htmlFor="name">Full Name</Label>
-              <div className="relative">
-                <User className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
-                <Input
-                  id="name"
-                  name="name"
-                  type="text"
-                  placeholder="Enter your full name"
-                  value={formData.name}
-                  onChange={handleInputChange}
-                  className={`pl-10 ${errors.name ? 'border-red-500' : ''}`}
-                />
-              </div>
-              {errors.name && (
-                <p className="text-sm text-red-500">{errors.name}</p>
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <div className="relative">
-                <Mail className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
-                <Input
-                  id="email"
-                  name="email"
-                  type="email"
-                  placeholder="Enter your email"
-                  value={formData.email}
-                  onChange={handleInputChange}
-                  className={`pl-10 ${errors.email ? 'border-red-500' : ''}`}
-                />
-              </div>
-              {errors.email && (
-                <p className="text-sm text-red-500">{errors.email}</p>
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
-              <div className="relative">
-                <Lock className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
-                <Input
-                  id="password"
-                  name="password"
-                  type={showPassword ? 'text' : 'password'}
-                  placeholder="Create a password"
-                  value={formData.password}
-                  onChange={handleInputChange}
-                  className={`pl-10 pr-10 ${errors.password ? 'border-red-500' : ''}`}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-3 text-slate-400 hover:text-slate-600"
-                >
-                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
-              </div>
-              {errors.password && (
-                <p className="text-sm text-red-500">{errors.password}</p>
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="confirmPassword">Confirm Password</Label>
-              <div className="relative">
-                <Lock className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
-                <Input
-                  id="confirmPassword"
-                  name="confirmPassword"
-                  type={showConfirmPassword ? 'text' : 'password'}
-                  placeholder="Confirm your password"
-                  value={formData.confirmPassword}
-                  onChange={handleInputChange}
-                  className={`pl-10 pr-10 ${errors.confirmPassword ? 'border-red-500' : ''}`}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                  className="absolute right-3 top-3 text-slate-400 hover:text-slate-600"
-                >
-                  {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
-              </div>
-              {errors.confirmPassword && (
-                <p className="text-sm text-red-500">{errors.confirmPassword}</p>
-              )}
-            </div>
-
-            <div className="flex items-center space-x-2">
-              <Checkbox
-                id="terms"
-                checked={acceptedTerms}
-                onCheckedChange={(checked) => {
-                  setAcceptedTerms(checked as boolean);
-                  if (errors.terms) {
-                    setErrors(prev => ({
-                      ...prev,
-                      terms: ''
-                    }));
-                  }
-                }}
-              />
-              <Label htmlFor="terms" className="text-sm">
-                I agree to the{' '}
-                <Link to="/terms" className="text-indigo-600 hover:text-indigo-500">
-                  Terms of Service
-                </Link>{' '}
-                and{' '}
-                <Link to="/privacy" className="text-indigo-600 hover:text-indigo-500">
-                  Privacy Policy
-                </Link>
-              </Label>
-            </div>
-            {errors.terms && (
-              <p className="text-sm text-red-500">{errors.terms}</p>
-            )}
-          </CardContent>
-
-          <CardFooter className="flex flex-col space-y-4">
-            <Button
-              type="submit"
-              className="w-full"
-              disabled={isSubmitting}
+    <div className="bg-gradient-to-br from-background via-muted/30 to-muted/50 grid min-h-svh lg:grid-cols-3 overflow-hidden">
+      {/* Signup Form (Left) */}
+      <motion.div
+        className="flex flex-col gap-6 col-span-2 p-6 md:p-10"
+        initial={{ opacity: 0, y: -20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.6, ease: "easeOut" }}
+      >
+        <motion.div
+          className="flex justify-center gap-2 md:justify-start"
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.1 }}
+        >
+          <a
+            href="#"
+            className="flex items-center gap-3 font-semibold text-xl group transition-all duration-300 hover:scale-105"
+          >
+            <motion.div
+              className="bg-gradient-to-br from-[#3B37FE] to-[#5B47FF] text-white flex size-8 items-center justify-center rounded-md shadow-lg shadow-[#3B37FE]/25"
+              whileHover={{ rotate: 5, scale: 1.1 }}
+              whileTap={{ scale: 0.95 }}
+              transition={{ type: "spring", stiffness: 400, damping: 17 }}
             >
-              {isSubmitting ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Creating account...
-                </>
-              ) : (
-                'Create account'
-              )}
-            </Button>
+              <MessagesSquare className="size-5" />
+            </motion.div>
+            <span className="text-foreground font-bold tracking-tight">
+              Relay
+            </span>
+          </a>
+        </motion.div>
 
-            <div className="text-center text-sm text-slate-600 dark:text-slate-400">
-              Already have an account?{' '}
-              <Link
-                to="/login"
-                className="text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 font-medium"
-              >
-                Sign in
-              </Link>
-            </div>
-          </CardFooter>
-        </form>
-      </Card>
+        <motion.div
+          className="flex flex-1 items-center justify-center"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, delay: 0.2 }}
+        >
+          <div className="w-full max-w-lg">
+            <motion.div
+              className="backdrop-blur-sm rounded-2xl p-8 shadow-2xl shadow-black/5"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.5, delay: 0.3 }}
+              whileHover={{ y: -2 }}
+            >
+              <SignupForm />
+            </motion.div>
+          </div>
+        </motion.div>
+      </motion.div>
+
+      {/* Branding Content (Right Blue Panel) */}
+      <motion.div
+        className="bg-gradient-to-br from-[#3B37FE] via-[#4C46FF] to-[#5B47FF] text-white p-10 rounded-2xl m-4 hidden lg:flex flex-col justify-between shadow-2xl shadow-[#3B37FE]/20 relative overflow-hidden"
+        initial={{ opacity: 0, x: 20 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ duration: 0.6, delay: 0.4 }}
+      >
+        {/* Background decoration */}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/10 to-transparent" />
+        <div className="absolute -top-20 -right-20 w-40 h-40 bg-white/10 rounded-full blur-3xl" />
+        <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-white/5 rounded-full blur-2xl" />
+        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-64 h-64 bg-white/5 rounded-full blur-3xl" />
+
+        <motion.div
+          className="relative z-10"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, delay: 0.5 }}
+        >
+          <motion.div
+            initial={{ opacity: 0, x: -10 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.5, delay: 0.6 }}
+          >
+            <Badge variant="secondary" className="border-slate-600/50 font-bold tracking-widest uppercase text-xs mb-6 backdrop-blur-sm">
+              Join Relay
+            </Badge>
+          </motion.div>
+
+          <motion.h1
+            className="text-5xl font-bold mt-4 leading-tight tracking-tight"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, delay: 0.7 }}
+          >
+            Start Your
+            <br />
+            <span className="bg-gradient-to-r from-white to-blue-100 bg-clip-text text-transparent">
+              Journey.
+            </span>
+          </motion.h1>
+
+          <motion.p
+            className="mt-6 text-blue-100 text-lg leading-relaxed font-medium"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, delay: 0.8 }}
+          >
+            Join thousands of users who trust Relay for their daily conversations.
+            Experience the future of messaging today.
+          </motion.p>
+        </motion.div>
+
+        <div className="space-y-6 relative z-10">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, delay: 0.9 }}
+          >
+            <Card 
+            className="mt-10 bg-slate-900 border-slate-700/50 backdrop-blur-md shadow-2xl transition-all duration-300 hover:bg-slate-900/50 hover:border-slate-600/50"
+              onMouseEnter={() => setIsPaused(true)}
+              onMouseLeave={() => setIsPaused(false)}
+            >
+              <CardContent className="p-6">
+                {/* Animated Feature Display */}
+                <div className="relative min-h-[120px] flex flex-col justify-center">
+                  <AnimatePresence mode="wait">
+                    <motion.div
+                      key={currentFeatureIndex}
+                      className="w-full"
+                      initial={{ opacity: 0, y: 30, scale: 0.95 }}
+                      animate={{ 
+                        opacity: 1, 
+                        y: 0, 
+                        scale: 1,
+                        transition: { 
+                          duration: 0.6,
+                          ease: "easeOut"
+                        }
+                      }}
+                      exit={{ 
+                        opacity: 0, 
+                        y: -30, 
+                        scale: 0.95,
+                        transition: { 
+                          duration: 0.4,
+                          ease: "easeIn"
+                        }
+                      }}
+                    >
+                      <div className="flex items-start gap-4">
+                        <motion.div
+                          className={`p-3 rounded-2xl ${features[currentFeatureIndex].bgColor} ${features[currentFeatureIndex].color} border border-white/10`}
+                          whileHover={{ scale: 1.1, rotate: 3 }}
+                          transition={{ type: "spring", stiffness: 400, damping: 17 }}
+                        >
+                          {(() => {
+                            const Icon = features[currentFeatureIndex].icon;
+                            return <Icon className="size-6" />;
+                          })()}
+                        </motion.div>
+                        
+                        <div className="flex-1">
+                          <h4 className="text-xl font-bold text-white mb-2">
+                            {features[currentFeatureIndex].title}
+                          </h4>
+                          <p className="text-blue-100 text-base leading-relaxed">
+                            {features[currentFeatureIndex].description}
+                          </p>
+                        </div>
+                      </div>
+                    </motion.div>
+                  </AnimatePresence>
+                </div>
+                
+                 {/* Progress Indicators */}
+              <div className="flex justify-center gap-3 mt-8">
+                {features.map((_, index) => (
+                  <motion.button
+                    key={index}
+                    className={`relative w-12 h-3 rounded-full transition-all duration-300 overflow-hidden ${
+                      index === currentFeatureIndex 
+                        ? 'bg-slate-700/60 ring-2 ring-white' 
+                        : 'bg-slate-700/40 hover:bg-slate-600/60'
+                    }`}
+                    onClick={() => setCurrentFeatureIndex(index)}
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                  >
+                    {/* Active indicator with progress animation */}
+                    {index === currentFeatureIndex && (
+                      <motion.div
+                        className="absolute inset-0 bg-white rounded-full origin-left"
+                        initial={{ scaleX: 0 }}
+                        animate={{ 
+                          scaleX: isPaused ? 0 : 1,
+                          transition: { 
+                            duration: isPaused ? 0.3 : 3,
+                            ease: "linear"
+                          }
+                        }}
+                        key={`progress-${currentFeatureIndex}`}
+                      />
+                    )}
+                    
+                    {/* Static indicator for inactive states */}
+                    <div className={`absolute left-1/2 top-1/2 transform -translate-x-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full transition-colors ${
+                      index === currentFeatureIndex ? 'bg-white' : 'bg-slate-400'
+                    }`} />
+                  </motion.button>
+                ))}
+              </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+        </div>
+      </motion.div>
     </div>
   );
-};
-
-export default RegisterPage;
+}

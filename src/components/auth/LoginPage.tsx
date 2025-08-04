@@ -1,192 +1,274 @@
-import React, { useState } from "react";
-import { Link } from "react-router-dom";
-import { useAuth } from "../../contexts/AuthContext";
-import { Button } from "../ui/button";
-import { Input } from "../ui/input";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "../ui/card";
-import { Label } from "../ui/label";
-import { Alert, AlertDescription } from "../ui/alert";
-import { Loader2, Mail, Lock, Eye, EyeOff } from 'lucide-react';
+import { MessagesSquare, Shield, Zap, Users } from "lucide-react";
+import { LoginForm } from "@/components/login-form";
+import { Card, CardContent } from "../ui/card";
+import { Badge } from "../ui/badge";
+import { motion, AnimatePresence } from "motion/react";
+import { useState, useEffect } from "react";
 
-const LoginPage: React.FC = () => {
-  const { login, loading } = useAuth();
-  const [formData, setFormData] = useState({
-    email: '',
-    password: ''
-  });
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const [showPassword, setShowPassword] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+export default function LoginPage() {
+  const features = [
+    {
+      icon: Zap,
+      title: "Smart Replies",
+      description: "AI-powered suggestions that understand context and help you respond faster with more meaningful conversations that feel natural and engaging.",
+      color: "text-yellow-400",
+      bgColor: "bg-yellow-500/20",
+    },
+    {
+      icon: Shield,
+      title: "Real-time Analysis",
+      description: "Instant summarization and sentiment detection powered by advanced machine learning algorithms that understand the tone and context of your messages.",
+      color: "text-emerald-400",
+      bgColor: "bg-emerald-500/20",
+    },
+    {
+      icon: Users,
+      title: "Seamless Sync",
+      description: "Your conversations follow you everywhere with real-time synchronization across all devices, ensuring you never miss an important message.",
+      color: "text-blue-400",
+      bgColor: "bg-blue-500/20",
+    },
+    {
+      icon: Shield,
+      title: "Privacy First",
+      description: "End-to-end encryption keeps you secure with military-grade protection, ensuring your personal conversations remain completely private and confidential.",
+      color: "text-purple-400",
+      bgColor: "bg-purple-500/20",
+    },
+  ];
 
-  const validateForm = () => {
-    const newErrors: Record<string, string> = {};
+  const [currentFeatureIndex, setCurrentFeatureIndex] = useState(0);
+  const [isPaused, setIsPaused] = useState(false);
 
-    if (!formData.email) {
-      newErrors.email = 'Email is required';
-    } else if (!/\S+@\S+\.\S+/.test(formData.email)) {
-      newErrors.email = 'Email is invalid';
-    }
+  useEffect(() => {
+    if (isPaused) return;
 
-    if (!formData.password) {
-      newErrors.password = 'Password is required';
-    } else if (formData.password.length < 6) {
-      newErrors.password = 'Password must be at least 6 characters';
-    }
+    const interval = setInterval(() => {
+      setCurrentFeatureIndex((prev) => (prev + 1) % features.length);
+    }, 3000); // Change feature every 3 seconds
 
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!validateForm()) return;
-
-    setIsSubmitting(true);
-    setErrors({});
-
-    const result = await login(formData.email, formData.password);
-    
-    if (!result.success) {
-      setErrors({ general: result.error || 'Login failed' });
-    }
-    
-    setIsSubmitting(false);
-  };
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({
-      ...prev,
-      [name]: value
-    }));
-    
-    // Clear errors when user starts typing
-    if (errors[name]) {
-      setErrors(prev => ({
-        ...prev,
-        [name]: ''
-      }));
-    }
-  };
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900">
-        <Loader2 className="h-8 w-8 animate-spin text-indigo-600" />
-      </div>
-    );
-  }
+    return () => clearInterval(interval);
+  }, [features.length, isPaused]);
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900 p-4">
-      <Card className="w-full max-w-md">
-        <CardHeader className="space-y-1">
-          <CardTitle className="text-2xl font-bold text-center">Welcome back</CardTitle>
-          <CardDescription className="text-center">
-            Enter your credentials to access your account
-          </CardDescription>
-        </CardHeader>
-        
-        <form onSubmit={handleSubmit}>
-          <CardContent className="space-y-4">
-            {errors.general && (
-              <Alert variant="destructive">
-                <AlertDescription>{errors.general}</AlertDescription>
-              </Alert>
-            )}
-
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <div className="relative">
-                <Mail className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
-                <Input
-                  id="email"
-                  name="email"
-                  type="email"
-                  placeholder="Enter your email"
-                  value={formData.email}
-                  onChange={handleInputChange}
-                  className={`pl-10 ${errors.email ? 'border-red-500' : ''}`}
-                />
-              </div>
-              {errors.email && (
-                <p className="text-sm text-red-500">{errors.email}</p>
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
-              <div className="relative">
-                <Lock className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
-                <Input
-                  id="password"
-                  name="password"
-                  type={showPassword ? 'text' : 'password'}
-                  placeholder="Enter your password"
-                  value={formData.password}
-                  onChange={handleInputChange}
-                  className={`pl-10 pr-10 ${errors.password ? 'border-red-500' : ''}`}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-3 text-slate-400 hover:text-slate-600"
-                >
-                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
-              </div>
-              {errors.password && (
-                <p className="text-sm text-red-500">{errors.password}</p>
-              )}
-            </div>
-
-            <div className="flex items-center justify-between">
-              <Link
-                to="/forgot-password"
-                className="text-sm text-indigo-600 hover:text-indigo-500 dark:text-indigo-400"
-              >
-                Forgot password?
-              </Link>
-            </div>
-          </CardContent>
-
-          <CardFooter className="flex flex-col space-y-4">
-            <Button
-              type="submit"
-              className="w-full"
-              disabled={isSubmitting}
+    <div className="bg-gradient-to-br from-background via-muted/30 to-muted/50 grid min-h-svh lg:grid-cols-3 overflow-hidden">
+      {/* Signup/Login Form (Left) */}
+      <motion.div
+        className="flex flex-col gap-6 col-span-2 p-6 md:p-10"
+        initial={{ opacity: 0, y: -20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.6, ease: "easeOut" }}
+      >
+        <motion.div
+          className="flex justify-center gap-2 md:justify-start"
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.1 }}
+        >
+          <a
+            href="#"
+            className="flex items-center gap-3 font-semibold text-xl group transition-all duration-300 hover:scale-105"
+          >
+            <motion.div
+              className="bg-gradient-to-br from-[#3B37FE] to-[#5B47FF] text-white flex size-8 items-center justify-center rounded-md shadow-lg shadow-[#3B37FE]/25"
+              whileHover={{ rotate: 5, scale: 1.1 }}
+              whileTap={{ scale: 0.95 }}
+              transition={{ type: "spring", stiffness: 400, damping: 17 }}
             >
-              {isSubmitting ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Signing in...
-                </>
-              ) : (
-                'Sign in'
-              )}
-            </Button>
+              <MessagesSquare className="size-5" />
+            </motion.div>
+            <span className="text-foreground font-bold tracking-tight">
+              Relay
+            </span>
+          </a>
+        </motion.div>
 
-            <div className="text-center text-sm text-slate-600 dark:text-slate-400">
-              Don't have an account?{' '}
-              <Link
-                to="/register"
-                className="text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 font-medium"
+        <motion.div
+          className="flex flex-1 items-center justify-center"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, delay: 0.2 }}
+        >
+          <div className="w-full max-w-lg">
+            <motion.div
+              className="backdrop-blur-sm rounded-2xl p-8 shadow-2xl shadow-black/5"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.5, delay: 0.3 }}
+              whileHover={{ y: -2 }}
+            >
+              <LoginForm />
+            </motion.div>
+          </div>
+        </motion.div>
+      </motion.div>
+
+      {/* Branding Content (Right Dark Panel) */}
+     <motion.div 
+        className="bg-gradient-to-br from-[#3B37FE] via-[#4C46FF] to-[#5B47FF] text-white p-10 rounded-2xl m-4 hidden lg:flex flex-col justify-between shadow-2xl shadow-[#3B37FE]/20 relative overflow-hidden"
+        initial={{ opacity: 0, x: 20 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ duration: 0.6, delay: 0.4 }}
+      >
+        {/* Background decoration */}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/10 to-transparent" />
+        <div className="absolute -top-20 -right-20 w-40 h-40 bg-white/10 rounded-full blur-3xl" />
+        <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-white/5 rounded-full blur-2xl" />
+        
+        <motion.div 
+          className="relative z-10"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, delay: 0.5 }}
+        >
+          <motion.div
+            initial={{ opacity: 0, x: -10 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.5, delay: 0.6 }}
+          >
+            <Badge variant="secondary" className="border-slate-600/50 font-bold tracking-widest uppercase text-xs mb-6 backdrop-blur-sm">
+              Relay
+            </Badge>
+          </motion.div>
+          
+          <motion.h1 
+            className="text-6xl font-inter font-bold mt-4 leading-tight tracking-tight"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, delay: 0.7 }}
+          >
+            Conversations.
+            <br />
+            <span className="bg-gradient-to-r from-white to-slate-300 bg-clip-text text-transparent">
+              Reimagined.
+            </span>
+          </motion.h1>
+          
+          <motion.p 
+            className="mt-6 text-slate-300 text-lg leading-relaxed font-medium"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, delay: 0.8 }}
+          >
+            Relay is your AI-powered messaging companion. Smart, secure, and beautifully minimal.
+            Stay connected like never before.
+          </motion.p>
+        </motion.div>
+
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, delay: 0.9 }}
+          className="relative z-10"
+        >
+          <Card 
+            className="mt-10 bg-slate-900 border-slate-700/50 backdrop-blur-md shadow-2xl transition-all duration-300 hover:bg-slate-900/50 hover:border-slate-600/50"
+            onMouseEnter={() => setIsPaused(true)}
+            onMouseLeave={() => setIsPaused(false)}
+          >
+            <CardContent>
+              {/* Animated Feature Display */}
+              <div className="relative min-h-[120px] flex flex-col justify-center">
+                <AnimatePresence mode="wait">
+                  <motion.div
+                    key={currentFeatureIndex}
+                    className="w-full"
+                    initial={{ opacity: 0, y: 30, scale: 0.95 }}
+                    animate={{ 
+                      opacity: 1, 
+                      y: 0, 
+                      scale: 1,
+                      transition: { 
+                        duration: 0.6,
+                        ease: "easeOut"
+                      }
+                    }}
+                    exit={{ 
+                      opacity: 0, 
+                      y: -30, 
+                      scale: 0.95,
+                      transition: { 
+                        duration: 0.4,
+                        ease: "easeIn"
+                      }
+                    }}
+                  >
+                    <div className="flex items-start gap-4">
+                      <motion.div
+                        className={`p-3 rounded-2xl ${features[currentFeatureIndex].bgColor} ${features[currentFeatureIndex].color} border border-white/10`}
+                        whileHover={{ scale: 1.1, rotate: 3 }}
+                        transition={{ type: "spring", stiffness: 400, damping: 17 }}
+                      >
+                        {(() => {
+                          const Icon = features[currentFeatureIndex].icon;
+                          return <Icon className="size-6" />;
+                        })()}
+                      </motion.div>
+                      
+                      <div className="flex-1">
+                        <h4 className="text-xl font-bold text-white mb-2">
+                          {features[currentFeatureIndex].title}
+                        </h4>
+                        <p className="text-slate-300 text-base leading-relaxed">
+                          {features[currentFeatureIndex].description}
+                        </p>
+                      </div>
+                    </div>
+                  </motion.div>
+                </AnimatePresence>
+              </div>
+              
+              {/* Progress Indicators */}
+              <div className="flex justify-center gap-3 mt-8">
+                {features.map((_, index) => (
+                  <motion.button
+                    key={index}
+                    className={`relative w-12 h-3 rounded-full transition-all duration-300 overflow-hidden ${
+                      index === currentFeatureIndex 
+                        ? 'bg-slate-700/60 ring-2 ring-white' 
+                        : 'bg-slate-700/40 hover:bg-slate-600/60'
+                    }`}
+                    onClick={() => setCurrentFeatureIndex(index)}
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                  >
+                    {/* Active indicator with progress animation */}
+                    {index === currentFeatureIndex && (
+                      <motion.div
+                        className="absolute inset-0 bg-white rounded-full origin-left"
+                        initial={{ scaleX: 0 }}
+                        animate={{ 
+                          scaleX: isPaused ? 0 : 1,
+                          transition: { 
+                            duration: isPaused ? 0.3 : 3,
+                            ease: "linear"
+                          }
+                        }}
+                        key={`progress-${currentFeatureIndex}`}
+                      />
+                    )}
+                    
+                    {/* Static indicator for inactive states */}
+                    <div className={`absolute left-1/2 top-1/2 transform -translate-x-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full transition-colors ${
+                      index === currentFeatureIndex ? 'bg-white' : 'bg-slate-400'
+                    }`} />
+                  </motion.button>
+                ))}
+              </div>
+              
+              {/* Subtle hover instruction */}
+              <motion.p
+                className="text-center text-slate-400 text-xs mt-4 opacity-60"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 0.6 }}
+                transition={{ delay: 2 }}
               >
-                Sign up
-              </Link>
-            </div>
-
-            <div className="text-center">
-              <p className="text-xs text-slate-500">
-                Demo credentials: demo@example.com / password
-              </p>
-            </div>
-          </CardFooter>
-        </form>
-      </Card>
+                Hover to pause • Click dots to navigate
+              </motion.p>
+            </CardContent>
+          </Card>
+        </motion.div>
+      </motion.div>
     </div>
   );
-};
-
-export default LoginPage;
+}

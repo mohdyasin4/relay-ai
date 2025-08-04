@@ -5,6 +5,11 @@ export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'er
 export interface User {
   id: string;
   name: string;
+  email?: string;
+  avatarUrl?: string;
+  status?: 'online' | 'offline' | 'away';
+  attachmenturl: string
+  attachmentType?: 'image' 
 }
 
 export interface Attachment {
@@ -22,19 +27,29 @@ export interface Message {
   senderId: string;
   senderName: string;
   timestamp: Date | string; // Allow string for serialization
-  status?: 'sent' | 'delivered' | 'read'; // For user messages
+  status?: 'queued' | 'sent' | 'delivered' | 'read'; // For user messages
   attachment?: {
     type: 'image';
     url: string; // base64 data URL
   };
-  reactions?: string[];
+  reactions?: {
+    emoji: string;
+    userId: string;
+  }[];
   isForwarded?: boolean;
   isGroup?: boolean;
+  replyTo?: {
+    id: string;
+    text: string;
+    senderId: string;
+    senderName: string;
+  };
 }
 
 export interface Contact {
   id: string;
   name: string;
+  avatarUrl?: string; // Avatar URL for the contact
   systemInstruction?: string; // Optional, for AI contacts
   isGroup?: boolean;
   isAi?: boolean;
@@ -55,6 +70,14 @@ export interface ReadReceipt {
     type: 'read_receipt';
     contactId: string;
     readerId: string;
+    messageIds?: string[]; // Optional array of message IDs that were read
+}
+
+export interface DeliveryReceipt {
+    type: 'delivery_receipt';
+    contactId: string;
+    readerId: string;
+    messageIds?: string[]; // Optional array of message IDs that were delivered
 }
 
 export interface TypingIndicatorPayload {
@@ -74,7 +97,14 @@ export interface ReactionPayload {
     action: 'add' | 'remove';
 }
 
-export type MqttPayload = Message | Invitation | ReadReceipt | TypingIndicatorPayload | ReactionPayload;
+export interface FriendRequestAccepted {
+    type: 'friend_request_accepted';
+    accepterId: string;
+    accepterName: string;
+    requesterId: string;
+}
+
+export type MqttPayload = Message | Invitation | ReadReceipt | DeliveryReceipt | TypingIndicatorPayload | ReactionPayload | FriendRequestAccepted;
 
 export interface MessagesState {
   [contactId: string]: Message[];

@@ -1,4 +1,7 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect } from 'react';
+import type { ReactNode } from 'react';
+import { createClient } from '@/lib/supabase/client';
+import { DatabaseService } from '@/services/databaseService';
 
 interface User {
   id: string;
@@ -13,6 +16,7 @@ interface AuthContextType {
   register: (name: string, email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
   loading: boolean;
+  refreshUserSession: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -37,9 +41,67 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   useEffect(() => {
     const checkAuth = async () => {
       try {
-        const savedUser = localStorage.getItem('user');
-        if (savedUser) {
-          setUser(JSON.parse(savedUser));
+        setLoading(true);
+        
+        // Check for Supabase session
+        const supabase = createClient();
+        const { data: { session }, error } = await supabase.auth.getSession();
+        
+        if (error) {
+          console.error('Supabase session check failed:', error);
+        }
+        
+        if (session?.user) {
+          // We have a valid Supabase session
+          console.log('Found Supabase session, fetching user data');
+          
+          // Try to get user data from our database
+          const dbUser = await DatabaseService.getUserById(session.user.id);
+          
+          if (dbUser) {
+            // We have user data in our database
+            const userData: User = {
+              id: dbUser.id,
+              name: dbUser.name,
+              email: session.user.email || '',
+              avatar: dbUser.avatarUrl || session.user.user_metadata?.avatar_url
+            };
+            
+            setUser(userData);
+            localStorage.setItem('user', JSON.stringify(userData));
+          } else {
+            // User exists in Supabase but not in our database
+            // Create user in database
+            console.log('User not found in database, creating new user');
+            try {
+              const newUser = await DatabaseService.upsertUser({
+                id: session.user.id,
+                name: session.user.user_metadata?.full_name || session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'User',
+                email: session.user.email,
+                avatarUrl: session.user.user_metadata?.avatar_url
+              });
+              
+              if (newUser) {
+                const userData: User = {
+                  id: newUser.id,
+                  name: newUser.name,
+                  email: session.user.email || '',
+                  avatar: newUser.avatarUrl || session.user.user_metadata?.avatar_url
+                };
+                
+                setUser(userData);
+                localStorage.setItem('user', JSON.stringify(userData));
+              }
+            } catch (dbError) {
+              console.error('Failed to create user in database:', dbError);
+            }
+          }
+        } else {
+          // No Supabase session, check localStorage as fallback
+          const savedUser = localStorage.getItem('user');
+          if (savedUser) {
+            setUser(JSON.parse(savedUser));
+          }
         }
       } catch (error) {
         console.error('Auth check failed:', error);
@@ -55,26 +117,64 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const login = async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
     setLoading(true);
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      const supabase = createClient();
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password
+      });
       
-      // Mock authentication - replace with real API call
-      if (email === 'demo@example.com' && password === 'password') {
-        const userData: User = {
-          id: '1',
-          email,
-          name: 'Demo User',
-          avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${email}`
-        };
+      if (error) {
+        return { success: false, error: error.message };
+      }
+      
+      if (data?.user) {
+        // Try to get user data from our database
+        const dbUser = await DatabaseService.getUserById(data.user.id);
         
-        setUser(userData);
-        localStorage.setItem('user', JSON.stringify(userData));
+        if (dbUser) {
+          const userData: User = {
+            id: dbUser.id,
+            name: dbUser.name,
+            email: data.user.email || '',
+            avatar: dbUser.avatarUrl || data.user.user_metadata?.avatar_url
+          };
+          
+          setUser(userData);
+          localStorage.setItem('user', JSON.stringify(userData));
+        } else {
+          // User exists in Supabase but not in our database
+          // Create user in database
+          try {
+            const newUser = await DatabaseService.upsertUser({
+              id: data.user.id,
+              name: data.user.user_metadata?.full_name || data.user.user_metadata?.name || data.user.email?.split('@')[0] || 'User',
+              email: data.user.email,
+              avatarUrl: data.user.user_metadata?.avatar_url
+            });
+            
+            if (newUser) {
+              const userData: User = {
+                id: newUser.id,
+                name: newUser.name,
+                email: data.user.email || '',
+                avatar: newUser.avatarUrl || data.user.user_metadata?.avatar_url
+              };
+              
+              setUser(userData);
+              localStorage.setItem('user', JSON.stringify(userData));
+            }
+          } catch (dbError) {
+            console.error('Failed to create user in database:', dbError);
+            // Still consider login successful if Supabase auth succeeded
+          }
+        }
+        
         return { success: true };
       } else {
-        return { success: false, error: 'Invalid email or password' };
+        return { success: false, error: 'Login failed. Please try again.' };
       }
-    } catch (error) {
-      return { success: false, error: 'Login failed. Please try again.' };
+    } catch (error: any) {
+      return { success: false, error: error.message || 'Login failed. Please try again.' };
     } finally {
       setLoading(false);
     }
@@ -83,30 +183,157 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const register = async (name: string, email: string, password: string): Promise<{ success: boolean; error?: string }> => {
     setLoading(true);
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Mock registration - replace with real API call
-      const userData: User = {
-        id: Date.now().toString(),
+      const supabase = createClient();
+      const { data, error } = await supabase.auth.signUp({
         email,
-        name,
-        avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${email}`
-      };
+        password,
+        options: {
+          data: {
+            full_name: name,
+            name: name
+          }
+        }
+      });
       
-      setUser(userData);
-      localStorage.setItem('user', JSON.stringify(userData));
-      return { success: true };
-    } catch (error) {
-      return { success: false, error: 'Registration failed. Please try again.' };
+      if (error) {
+        return { success: false, error: error.message };
+      }
+      
+      if (data?.user) {
+        // Create user in our database
+        try {
+          const newUser = await DatabaseService.upsertUser({
+            id: data.user.id,
+            name: name,
+            email: data.user.email,
+            avatarUrl: data.user.user_metadata?.avatar_url
+          });
+          
+          if (newUser) {
+            const userData: User = {
+              id: newUser.id,
+              name: newUser.name,
+              email: data.user.email || '',
+              avatar: newUser.avatarUrl || data.user.user_metadata?.avatar_url
+            };
+            
+            setUser(userData);
+            localStorage.setItem('user', JSON.stringify(userData));
+            console.log('User registered successfully:', userData);
+          }
+        } catch (dbError) {
+          console.error('Failed to create user in database:', dbError);
+          // Still consider registration successful if Supabase auth succeeded
+        }
+        
+        return { success: true };
+      } else {
+        return { success: false, error: 'Registration failed. Please try again.' };
+      }
+    } catch (error: any) {
+      return { success: false, error: error.message || 'Registration failed. Please try again.' };
     } finally {
       setLoading(false);
     }
   };
 
-  const logout = () => {
-    setUser(null);
-    localStorage.removeItem('user');
+  const logout = async () => {
+    try {
+      console.log('Signing out from Supabase...');
+      
+      // Sign out from Supabase
+      const supabase = createClient();
+      const { error } = await supabase.auth.signOut();
+      
+      if (error) {
+        console.error('Error during Supabase signOut:', error);
+      } else {
+        console.log('Supabase signOut successful');
+      }
+      
+      // Clear local state
+      setUser(null);
+      localStorage.removeItem('user');
+      
+      return true;
+    } catch (error) {
+      console.error('Exception during logout:', error);
+      // Still clear local state even if Supabase logout fails
+      setUser(null);
+      localStorage.removeItem('user');
+      return false;
+    }
+  };
+
+  // Add a function to manually refresh the user session
+  const refreshUserSession = async () => {
+    try {
+      setLoading(true);
+      console.log('Refreshing user session...');
+      
+      // Check for Supabase session
+      const supabase = createClient();
+      const { data: { session }, error } = await supabase.auth.getSession();
+      
+      if (error) {
+        console.error('Supabase session refresh failed:', error);
+        return;
+      }
+      
+      if (session?.user) {
+        console.log('Found valid session during refresh, fetching user data');
+        
+        // Try to get user data from our database
+        const dbUser = await DatabaseService.getUserById(session.user.id);
+        
+        if (dbUser) {
+          // We have user data in our database
+          const userData: User = {
+            id: dbUser.id,
+            name: dbUser.name,
+            email: session.user.email || '',
+            avatar: dbUser.avatarUrl || session.user.user_metadata?.avatar_url
+          };
+          
+          setUser(userData);
+          localStorage.setItem('user', JSON.stringify(userData));
+          console.log('User session refreshed successfully:', userData);
+        } else {
+          // User exists in Supabase but not in our database
+          // Create user in database
+          console.log('Creating user in database during refresh');
+          try {
+            const newUser = await DatabaseService.upsertUser({
+              id: session.user.id,
+              name: session.user.user_metadata?.full_name || session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'User',
+              email: session.user.email,
+              avatarUrl: session.user.user_metadata?.avatar_url
+            });
+            
+            if (newUser) {
+              const userData: User = {
+                id: newUser.id,
+                name: newUser.name,
+                email: session.user.email || '',
+                avatar: newUser.avatarUrl || session.user.user_metadata?.avatar_url
+              };
+              
+              setUser(userData);
+              localStorage.setItem('user', JSON.stringify(userData));
+              console.log('New user created during refresh:', userData);
+            }
+          } catch (dbError) {
+            console.error('Failed to create user in database during refresh:', dbError);
+          }
+        }
+      } else {
+        console.log('No valid session found during refresh');
+      }
+    } catch (error) {
+      console.error('Error during session refresh:', error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const value = {
@@ -114,7 +341,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     login,
     register,
     logout,
-    loading
+    loading,
+    refreshUserSession
   };
 
   return (

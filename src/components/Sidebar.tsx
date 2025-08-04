@@ -5,9 +5,12 @@ import UsersIcon from './icons/UsersIcon';
 import SettingsIcon from './icons/SettingsIcon';
 import PinIcon from './icons/PinIcon';
 import UserPlusIcon from './icons/UserPlusIcon';
+import UserIcon from './icons/UserIcon';
 import SearchIcon from './icons/SearchIcon';
 import CloseIcon from './icons/CloseIcon';
 import LogOutIcon from './icons/LogOutIcon';
+import TypingIndicator from './icons/TypingIndicator';
+import { DateUtils } from '../utils/dateUtils';
 
 interface SidebarProps {
   contacts: Contact[];
@@ -21,11 +24,13 @@ interface SidebarProps {
   onLogout: () => void;
   onTogglePin: (id: string) => void;
   onInviteUser: () => void;
+  onFriendRequests: () => void;
   style?: React.CSSProperties;
   theme: Theme;
+  typingIndicators: Record<string, Record<string, string>>;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ contacts, messages, unreadCounts, selectedContactId, onSelectContact, user, onNewGroup, onSettings, onLogout, onTogglePin, onInviteUser, style, theme }) => {
+const Sidebar: React.FC<SidebarProps> = ({ contacts, messages, unreadCounts, selectedContactId, onSelectContact, user, onNewGroup, onSettings, onLogout, onTogglePin, onInviteUser, onFriendRequests, style, theme, typingIndicators }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isUserMenuOpen, setUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
@@ -60,16 +65,34 @@ const Sidebar: React.FC<SidebarProps> = ({ contacts, messages, unreadCounts, sel
       
       const unreadA = unreadCounts[a.id] || 0;
       const unreadB = unreadCounts[b.id] || 0;
-
-      // Unread chats have priority over read ones (within the same pinned status)
-      if (unreadA > 0 && unreadB === 0) return -1;
-      if (unreadB > 0 && unreadA === 0) return 1;
-
-      // For contacts with the same pinned and read status, sort by last message time.
       const timeA = getSortKey(a);
       const timeB = getSortKey(b);
+
+      // Within the same pinned status, prioritize by:
+      // 1. Unread chats first
+      // 2. Among unread chats, sort by most recent message time
+      // 3. Among read chats, sort by most recent message time
       
-      return timeB - timeA; // Descending order for most recent first
+      if (unreadA > 0 && unreadB === 0) {
+        return -1; // A has unread, B doesn't - A comes first
+      }
+      
+      if (unreadB > 0 && unreadA === 0) {
+        return 1; // B has unread, A doesn't - B comes first
+      }
+      
+      // Both have the same read/unread status, sort by last message time (newest first)
+      if (timeA !== timeB) {
+        return timeB - timeA; // Descending order for most recent first
+      }
+      
+      // If timestamps are the same, prioritize higher unread count
+      if (unreadA !== unreadB) {
+        return unreadB - unreadA;
+      }
+      
+      // Fallback to alphabetical sorting for consistency
+      return a.name.localeCompare(b.name);
     });
   }, [contacts, searchTerm, messages, unreadCounts]);
 
@@ -120,6 +143,9 @@ const Sidebar: React.FC<SidebarProps> = ({ contacts, messages, unreadCounts, sel
           <button onClick={onInviteUser} className="p-2 rounded-full text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors" aria-label="Invite user">
             <UserPlusIcon className="w-6 h-6" />
           </button>
+          <button onClick={onFriendRequests} className="p-2 rounded-full text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors" aria-label="Friend requests">
+            <UserIcon className="w-6 h-6" />
+          </button>
           <button onClick={onNewGroup} className="p-2 rounded-full text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors" aria-label="New group">
             <UsersIcon className="w-6 h-6" />
           </button>
@@ -164,35 +190,52 @@ const Sidebar: React.FC<SidebarProps> = ({ contacts, messages, unreadCounts, sel
                   <button
                     onClick={() => onSelectContact(contact.id)}
                     className={`w-full text-left p-3 flex items-start gap-3 transition-colors duration-200 ${
-                      isSelected ? 'bg-indigo-100 dark:bg-indigo-900/40' : 'hover:bg-slate-100 dark:hover:bg-slate-800/50'
+                      isSelected 
+                        ? 'bg-indigo-100 dark:bg-indigo-900/40' 
+                        : 'hover:bg-slate-100 dark:hover:bg-slate-800/50'
                     }`}
                     aria-current={isSelected}
                   >
-                    <GeneratedAvatar 
-                      name={contact.name} 
-                      isGroup={contact.isGroup} 
-                      memberIds={contact.memberIds}
-                      creatorId={contact.creatorId}
-                      allContacts={contacts}
-                      currentUser={user}
-                    />
+                    <div className="relative">
+                      <GeneratedAvatar 
+                        name={contact.name} 
+                        isGroup={contact.isGroup} 
+                        memberIds={contact.memberIds}
+                        creatorId={contact.creatorId}
+                        allContacts={contacts}
+                        currentUser={user}
+                      />
+                    </div>
                     <div className="flex-1 overflow-hidden">
                       <div className="flex items-center">
                           {contact.isPinned && <PinIcon className="w-4 h-4 mr-1.5 text-indigo-500 flex-shrink-0" />}
                           <h2 className={`font-semibold truncate text-base ${isSelected ? 'text-indigo-700 dark:text-white' : 'text-slate-800 dark:text-slate-200'}`}>{contact.name}</h2>
                       </div>
-                       <p className={`text-sm truncate flex-1 pt-1 ${isUnread ? 'font-bold text-slate-700 dark:text-slate-200' : 'text-slate-600 dark:text-slate-400'}`}>
-                        {lastMessage?.isForwarded && 'Forwarded Message'}
-                        {lastMessage?.attachment && !lastMessage.isForwarded ? '📷 Image' : ''}
-                        {!lastMessage?.isForwarded && lastMessage?.text ? lastMessage.text : !lastMessage ? 'Start a conversation...' : ''}
+                      <p className={`text-sm truncate flex-1 pt-1 ${isUnread ? 'font-bold text-slate-700 dark:text-slate-200' : 'text-slate-600 dark:text-slate-400'}`}>
+                        {typingIndicators[contact.id] && Object.keys(typingIndicators[contact.id]).length > 0 ? (
+                          <span className="flex items-center gap-2">
+                            <span className="italic">{Object.values(typingIndicators[contact.id])[0]} is typing</span>
+                            <TypingIndicator />
+                          </span>
+                        ) : lastMessage?.isForwarded ? (
+                          'Forwarded Message'
+                        ) : lastMessage?.attachment && !lastMessage.isForwarded ? (
+                          '📷 Image'
+                        ) : !lastMessage?.isForwarded && lastMessage?.text ? (
+                          lastMessage.text
+                        ) : !lastMessage ? (
+                          'Start a conversation...'
+                        ) : ''}
                       </p>
                     </div>
                     <div className="flex flex-col items-end space-y-1.5 flex-shrink-0">
                         <span className={`text-xs ${isUnread ? 'text-indigo-600 dark:text-indigo-400 font-bold' : 'text-slate-500 dark:text-slate-400'}`}>
-                           {lastMessage ? new Date(lastMessage.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                           {lastMessage ? (
+                             DateUtils.formatSidebarTime(lastMessage.timestamp)
+                           ) : ''}
                         </span>
                         {unreadCount > 0 ? (
-                            <span className="bg-indigo-600 text-white text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center">
+                            <span className="bg-indigo-600 text-white text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center animate-pulse">
                                 {unreadCount > 9 ? '9+' : unreadCount}
                             </span>
                         ) : (

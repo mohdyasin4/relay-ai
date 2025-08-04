@@ -1,0 +1,78 @@
+import { createClient } from '@/lib/supabase/client';
+import type { Message, Attachment } from '../types';
+import { uploadAttachment } from '../utils/storageUtils';
+
+export interface DatabaseMessage {
+  id: string;
+  text: string;
+  senderId: string;
+  recipientId?: string;
+  groupId?: string;
+  status: 'sent' | 'delivered' | 'read';
+  timestamp: string;
+  attachmenturl?: string;
+  reactions?: string[]; // Array of emoji strings
+}
+
+export class MessageService {
+  /**
+   * Save a message to the database
+   */
+  static async saveMessage(message: Message): Promise<boolean> {
+    const supabase = createClient();
+    
+    try {
+      // Check if sender is an AI persona
+      const { AI_PERSONAS } = await import('../constants');
+      const isAiSender = AI_PERSONAS.some(ai => ai.id === message.senderId);
+
+      // Handle attachment upload if it's a local file (not already a URL)
+      let attachmenturl = message.attachment?.url;
+      if (message.attachment?.file && message.senderId) {
+        try {
+          // Upload to Supabase storage
+          attachmenturl = await uploadAttachment({
+            userId: message.senderId,
+            file: message.attachment.file
+          });
+        } catch (error) {
+          console.error('Error uploading attachment:', error);
+        }
+      }
+
+      const { error } = await supabase
+        .from('Message')
+        .insert({
+          id: message.id,
+          text: message.text,
+          senderId: isAiSender ? null : message.senderId, // Null for AI messages
+          aiSenderId: isAiSender ? message.senderId : null, // AI persona ID
+          senderName: message.senderName,
+          recipientId: message.isGroup ? null : message.contactId,
+          groupId: message.isGroup ? message.contactId : null,
+          status: message.status || 'sent',
+          timestamp: typeof message.timestamp === 'string' 
+            ? message.timestamp 
+            : (message.timestamp instanceof Date 
+                ? message.timestamp.toISOString() 
+                : new Date().toISOString()),
+          attachmenturl: attachmenturl || null,
+          isAiMessage: isAiSender,
+          // Add reply fields if message has a replyTo property
+          replyToId: message.replyTo?.id || null,
+          replyToText: message.replyTo?.text || null,
+          replyToSenderId: message.replyTo?.senderId || null,
+          replyToSenderName: message.replyTo?.senderName || null
+        });
+
+      if (error) {
+        console.error('Error saving message:', error);
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      console.error('Error in saveMessage:', error);
+      return false;
+    }
+  }

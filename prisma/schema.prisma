@@ -1,0 +1,144 @@
+  // This is your Prisma schema file,
+  // learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+  generator client {
+    provider = "prisma-client-js"
+  }
+
+  datasource db {
+    provider  = "postgresql"
+    url       = env("DATABASE_URL")
+    directUrl = env("DIRECT_URL")
+  }
+
+  // User model linked to Supabase Auth
+  model User {
+    id               String    @id
+    email            String    @unique
+    name             String
+    avatarUrl        String?
+    status           String    @default("offline") // online, offline, away
+    lastLoginAt      DateTime?
+    lastLogoutAt     DateTime?
+    createdAt        DateTime  @default(now())
+    updatedAt        DateTime  @updatedAt
+    
+    // User preferences
+    modalPreferences Json?     // Stores preferences for modals (shown/hidden state, etc.)
+    
+    // Relations
+    sentMessages     Message[] @relation("SentMessages")
+    contacts         Contact[] @relation("UserContacts")
+    groups           Group[]   @relation("GroupMembers")
+    createdGroups    Group[]   @relation("GroupCreator")
+    sentFriendRequests FriendRequest[] @relation("SentFriendRequests")
+    receivedFriendRequests FriendRequest[] @relation("ReceivedFriendRequests")
+    sentInvitations  Invitation[] @relation("SentInvitations")
+  }
+
+  // Contact model (represents a contact in a user's list)
+  model Contact {
+    id               String    @id @default(uuid())
+    userId           String    
+    contactUserId    String?   // Nullable for AI contacts
+    isAi             Boolean   @default(false)
+    aiPersonaId      String?   // For AI contacts, stores the AI persona ID
+    isPinned         Boolean   @default(false)
+    createdAt        DateTime  @default(now())
+    updatedAt        DateTime  @updatedAt
+    
+    // Relations
+    user             User      @relation("UserContacts", fields: [userId], references: [id], onDelete: Cascade)
+
+    @@unique([userId, contactUserId])
+    @@unique([userId, aiPersonaId])
+  }
+
+  // Friend request model
+  model FriendRequest {
+    id               String    @id @default(uuid())
+    senderId         String
+    receiverId       String
+    status           String    @default("pending") // pending, accepted, rejected
+    createdAt        DateTime  @default(now())
+    updatedAt        DateTime  @updatedAt
+
+    // Relations
+    sender           User      @relation("SentFriendRequests", fields: [senderId], references: [id], onDelete: Cascade)
+    receiver         User      @relation("ReceivedFriendRequests", fields: [receiverId], references: [id], onDelete: Cascade)
+
+    @@unique([senderId, receiverId])
+  }
+
+  // Invitation model for email invitations
+  model Invitation {
+    id               String    @id @default(uuid())
+    email            String
+    inviterId        String
+    inviterName      String
+    status           String    @default("pending") // pending, accepted, expired
+    createdAt        DateTime  @default(now())
+    updatedAt        DateTime  @updatedAt
+
+    // Relations
+    inviter          User      @relation("SentInvitations", fields: [inviterId], references: [id], onDelete: Cascade)
+
+    @@unique([email, inviterId])
+  }
+
+  // Group model (for group chats)
+  model Group {
+    id               String    @id @default(uuid())
+    name             String
+    creatorId        String
+    memberIds        String[]  @default([]) // JSON array of all member IDs including AI personas
+    createdAt        DateTime  @default(now())
+    updatedAt        DateTime  @updatedAt
+
+    // Relations
+    messages         Message[] @relation("GroupMessages")
+    members          User[]    @relation("GroupMembers")
+    creator          User      @relation("GroupCreator", fields: [creatorId], references: [id])
+  }
+
+  // Message model
+  model Message {
+    id               String    @id @default(uuid())
+    text             String
+    senderId         String?   // Nullable for AI messages
+    aiSenderId       String?   // For AI personas
+    senderName       String    // Store sender name directly
+    groupId          String?
+    recipientId      String?
+    status           String    @default("sent") // sent, delivered, read
+    timestamp        DateTime  @default(now())
+    attachmenturl    String?
+    isAiMessage      Boolean   @default(false) // Flag to identify AI messages
+    
+    // Reply fields
+    replyToId        String?
+    replyToText      String?
+    replyToSenderId  String?
+    replyToSenderName String?
+    
+    // Relations
+    sender           User?     @relation("SentMessages", fields: [senderId], references: [id])
+    group            Group?    @relation("GroupMessages", fields: [groupId], references: [id])
+    
+    // For reactions to messages
+    reactions        Reaction[]
+  }
+
+  // Reaction model (for emoji reactions to messages)
+  model Reaction {
+    id               String    @id @default(uuid())
+    messageId        String
+    userId           String
+    emoji            String
+    createdAt        DateTime  @default(now())
+    
+    // Relations
+    message          Message   @relation(fields: [messageId], references: [id], onDelete: Cascade)
+    
+    @@unique([messageId, userId, emoji])
+  }

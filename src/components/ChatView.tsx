@@ -9,9 +9,10 @@ import CloseIcon from './icons/CloseIcon';
 import EditIcon from './icons/EditIcon';
 import PlusIcon from './icons/PlusIcon';
 import CheckIcon from './icons/CheckIcon';
+import ReplyIcon from './icons/ReplyIcon';
 import ChatBubbleLeftRightIcon from './icons/ChatBubbleLeftRightIcon';
 import { fileToBase64 } from '../utils/imageUtils';
-import { getTimelineDate, formatPresence } from '../utils/dateUtils';
+import { getTimelineDate, formatPresence, DateUtils } from '../utils/dateUtils';
 import DateSeparator from './DateSeparator';
 import NewMessagesSeparator from './NewMessagesSeparator';
 import { mqttService } from '../services/mqttService';
@@ -24,7 +25,7 @@ interface ChatViewProps {
   messages: Message[];
   isLoading: boolean;
   typingIndicators: Record<string, string>;
-  onSendMessage: (text: string, attachment?: Attachment) => void;
+  onSendMessage: (text: string, attachment?: Attachment, replyInfo?: { replyTo: Message['replyTo'] }) => void;
   onImageClick: (url: string) => void;
   onEditGroup: (group: Contact) => void;
   onReact: (messageId: string, emoji: string) => void;
@@ -60,6 +61,7 @@ const ChatView: React.FC<ChatViewProps> = ({
 }) => {
   const [inputText, setInputText] = useState('');
   const [attachment, setAttachment] = useState<Attachment | null>(null);
+  const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -82,7 +84,8 @@ const ChatView: React.FC<ChatViewProps> = ({
     let lastDate: string | null = null;
 
     messages.forEach(message => {
-      const messageDate = new Date(message.timestamp);
+      // Use DateUtils.getMoment to ensure consistent timestamp handling
+      const messageDate = DateUtils.getMoment(message.timestamp).toDate();
       const timelineDate = getTimelineDate(messageDate);
 
       if (timelineDate !== lastDate) {
@@ -115,16 +118,20 @@ const ChatView: React.FC<ChatViewProps> = ({
   }, [contact, currentUser, messages]);
 
   useEffect(() => {
-    if (separatorRef.current) {
-        separatorRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (firstUnreadMessageId && separatorRef.current) {
+      // Wait a moment for the component to render properly before scrolling
+      setTimeout(() => {
+        separatorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 300);
     } else {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [messages, isLoading, typingIndicators, firstUnreadMessageId]);
+  }, [messages, isLoading, typingIndicators, firstUnreadMessageId, contact?.id]);
   
   useEffect(() => {
       setInputText('');
       setAttachment(null);
+      setReplyingTo(null);
       setSuggestionState(p => ({...p, isOpen: false}));
   }, [contact]);
   
@@ -312,9 +319,20 @@ const ChatView: React.FC<ChatViewProps> = ({
     }
 
     if ((inputText.trim() || attachment) && !isLoading) {
-      onSendMessage(inputText.trim(), attachment || undefined);
+      // Add reply information if replying to a message
+      const replyInfo = replyingTo ? {
+        replyTo: {
+          id: replyingTo.id,
+          text: replyingTo.text,
+          senderId: replyingTo.senderId,
+          senderName: replyingTo.senderName
+        }
+      } : undefined;
+      
+      onSendMessage(inputText.trim(), attachment || undefined, replyInfo);
       setInputText('');
       setAttachment(null);
+      setReplyingTo(null);
     }
   };
 
@@ -485,6 +503,7 @@ const ChatView: React.FC<ChatViewProps> = ({
                         onImageClick={onImageClick} 
                         onReact={onReact} 
                         onForward={onForward} 
+                        onReply={setReplyingTo}
                         allContacts={allKnownContacts}
                     />
                 </React.Fragment>
@@ -526,6 +545,28 @@ const ChatView: React.FC<ChatViewProps> = ({
                 </button>
             </div>
         )}
+        
+        {replyingTo && (
+          <div className="mb-2 flex items-start gap-2 bg-slate-200 dark:bg-slate-800 p-2 rounded-lg relative">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center">
+                <ReplyIcon className="w-4 h-4 mr-1 text-indigo-500" />
+                <span className="font-medium text-sm text-indigo-600 dark:text-indigo-400">
+                  Replying to {replyingTo.senderName}
+                </span>
+              </div>
+              <p className="text-sm text-slate-600 dark:text-slate-400 truncate">{replyingTo.text}</p>
+            </div>
+            <button 
+              onClick={() => setReplyingTo(null)} 
+              className="text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+              aria-label="Cancel reply"
+            >
+              <CloseIcon className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+        
         <form onSubmit={handleSubmit} className="flex items-start gap-3">
           <input
             type="file"

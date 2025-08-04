@@ -1,29 +1,37 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import Sidebar from './components/Sidebar';
 import ChatView from './components/ChatView';
-import Onboarding from './components/Onboarding';
 import SettingsModal from './components/SettingsModal';
 import NewGroupModal from './components/NewGroupModal';
 import EditGroupModal from './components/EditGroupModal';
 import Lightbox from './components/Lightbox';
 import ForwardMessageModal from './components/ForwardMessageModal';
 import InviteUserModal from './components/InviteUserModal';
+import FriendRequestsModal from './components/FriendRequestsModal';
+import { generateUUID } from './utils/uuidUtils';
 import { sendMessageToBot } from './services/geminiService';
+import { FriendsService } from './services/friendsService';
+import { MessageService } from './services/messageService';
+import { GroupService } from './services/groupService';
 import { useLocalStorage } from './hooks/useLocalStorage';
-import type { Contact, Message, MessagesState, User, Attachment, Theme, MqttPayload, Invitation, ReadReceipt, TypingIndicatorPayload, ReactionPayload } from './types';
-import { CONTACTS, AI_PERSONAS } from './constants';
+import { useAuth } from './contexts/AuthContext';
+import type { Contact, Message, MessagesState, User, Attachment, Theme, MqttPayload, Invitation, ReadReceipt, DeliveryReceipt, TypingIndicatorPayload, ReactionPayload } from './types';
+import { AI_PERSONAS } from './constants';
 import { mqttService } from './services/mqttService';
 
 const App: React.FC = () => {
-  const [user, setUser] = useLocalStorage<User | null>('userProfile', null);
-  const [hasOnboarded, setHasOnboarded] = useLocalStorage<boolean>('hasOnboarded', false);
+  console.log('App component rendering');
+  const { user: authUser, logout } = useAuth(); // Access authenticated user and logout from AuthContext
+  console.log('Auth user from context:', authUser);
+  const [user, setUser] = useState<User | null>(authUser); // Initialize with auth user
   const [theme, setTheme] = useLocalStorage<Theme>('theme', 'dark');
   const [sidebarWidth, setSidebarWidth] = useLocalStorage<number>('sidebarWidth', 320);
+  const [mqttStatus, setMqttStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
 
-  const [contacts, setContacts] = useLocalStorage<Contact[]>('contacts', CONTACTS);
+  const [contacts, setContacts] = useState<Contact[]>([]);
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
-  const [messages, setMessages] = useLocalStorage<MessagesState>('messages', {});
-  const [unreadCounts, setUnreadCounts] = useLocalStorage<Record<string, number>>('unreadCounts', {});
+  const [messages, setMessages] = useState<MessagesState>({});
+  const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [typingIndicators, setTypingIndicators] = useState<Record<string, Record<string, string>>>({});
   
@@ -32,6 +40,7 @@ const App: React.FC = () => {
   const [isSettingsOpen, setSettingsOpen] = useState(false);
   const [isNewGroupOpen, setNewGroupOpen] = useState(false);
   const [isInviteModalOpen, setInviteModalOpen] = useState(false);
+  const [isFriendRequestsOpen, setFriendRequestsOpen] = useState(false);
   const [editingGroup, setEditingGroup] = useState<Contact | null>(null);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [forwardingMessage, setForwardingMessage] = useState<Message | null>(null);
@@ -71,7 +80,7 @@ const App: React.FC = () => {
         try {
             const dummyApiMessage: Message = {
                 type: 'chat',
-                id: `quote-request-${crypto.randomUUID()}`,
+                id: `quote-request-${generateUUID()}`,
                 contactId: quoteBot.id,
                 text: "Give me another inspirational quote.",
                 senderId: currentUser.id,
@@ -89,13 +98,21 @@ const App: React.FC = () => {
             if (fullResponse.trim()) {
                 const newQuoteMessage: Message = {
                     type: 'chat',
-                    id: crypto.randomUUID(),
+                    id: generateUUID(),
                     contactId: quoteBot.id,
                     text: fullResponse.trim(),
                     senderId: quoteBot.id,
                     senderName: quoteBot.name,
                     timestamp: new Date(),
                 };
+
+                // Save quote message to database
+                try {
+                    await MessageService.saveMessage(newQuoteMessage);
+                    console.log('Quote message saved to database');
+                } catch (error) {
+                    console.error('Failed to save quote message to database:', error);
+                }
 
                 currentSetMessages(prevMessages => {
                     const chatHistory = prevMessages[quoteBot.id] || [];
@@ -126,6 +143,133 @@ const App: React.FC = () => {
   }, []);
   // --- End of Quote Bot Proactive Messaging ---
 
+  // Sync user from auth context
+  useEffect(() => {
+    if (authUser) {
+      console.log('Updating user profile from auth context:', authUser);
+      
+      // Create a new user object with the correct type
+      const updatedUser: User = {
+        id: authUser.id,
+        name: authUser.name,
+        email: authUser.email,
+        avatarUrl: authUser.avatar,
+        status: (authUser as any).status || 'online'
+      };
+      
+      setUser(updatedUser);
+    }
+  }, [authUser, setUser]);
+
+  const loadAllContactMessages = useCallback(async (contactsList: Contact[]) => {
+    console.log('Loading messages for all contacts for proper sorting');
+    const messagePromises = contactsList.map(async (contact) => {
+      try {
+        // Only load messages for real contacts and groups, not AI assistants
+        if (!contact.isAi) {
+          const dbMessages = await MessageService.getMessages(contact.id, contact.isGroup);
+          return { contactId: contact.id, messages: dbMessages };
+        }
+        return null;
+      } catch (error) {
+        console.error(`Failed to load messages for contact ${contact.id}:`, error);
+        return null;
+      }
+    });
+
+    const results = await Promise.all(messagePromises);
+    const messagesMap: MessagesState = {};
+    
+    results.forEach(result => {
+      if (result) {
+        messagesMap[result.contactId] = result.messages;
+      }
+    });
+
+    setMessages(messagesMap);
+    console.log('Loaded messages for all contacts:', messagesMap);
+  }, []);
+
+  const loadContactsFromDatabase = useCallback(async () => {
+    if (!user) return;
+    
+    console.log('Loading contacts from database for user:', user.id);
+    try {
+      // Load all contacts from database (including AI assistants)
+      const allContacts = await FriendsService.getContacts(user.id);
+      console.log('Contacts loaded from database:', allContacts);
+      
+      // Subscribe to MQTT topics for new contacts
+      allContacts.forEach(contact => {
+        if (!contact.isAi) {
+          const topic = contact.isGroup ? `chat/${contact.id}` : `chat/${[user.id, contact.id].sort().join('-')}`;
+          mqttService.subscribe(topic);
+          console.log(`Subscribed to topic for contact ${contact.name}: ${topic}`);
+        }
+      });
+      
+      setContacts(allContacts);
+      
+      // Load recent messages for all contacts to enable proper sorting
+      await loadAllContactMessages(allContacts);
+    } catch (error) {
+      console.error('Failed to load contacts from database:', error);
+      // Fallback to empty contacts on error
+      setContacts([]);
+    }
+  }, [user, loadAllContactMessages]);
+
+  // Load contacts from database when user changes
+  useEffect(() => {
+    if (user) {
+      loadContactsFromDatabase();
+    }
+  }, [user, loadContactsFromDatabase]);
+
+  const processQueuedMessages = useCallback(async () => {
+    if (!user) return;
+    
+    console.log('Processing queued messages...');
+    
+    // Find all queued messages in current messages state
+    const queuedMessageIds: string[] = [];
+    Object.values(messages).forEach(contactMessages => {
+      contactMessages.forEach(message => {
+        if (message.status === 'queued' && message.senderId === user.id) {
+          queuedMessageIds.push(message.id);
+        }
+      });
+    });
+    
+    if (queuedMessageIds.length > 0) {
+      console.log(`Found ${queuedMessageIds.length} queued messages to send`);
+      
+      // Update all queued messages to 'sent' status
+      for (const messageId of queuedMessageIds) {
+        try {
+          await MessageService.updateMessageStatus(messageId, 'sent');
+        } catch (error) {
+          console.error('Failed to update queued message status:', messageId, error);
+        }
+      }
+      
+      // Update local state
+      setMessages(prev => {
+        const updated = { ...prev };
+        Object.keys(updated).forEach(contactId => {
+          updated[contactId] = updated[contactId].map(msg => 
+            msg.status === 'queued' && msg.senderId === user.id 
+              ? { ...msg, status: 'sent' as const }
+              : msg
+          );
+        });
+        return updated;
+      });
+      
+      console.log('Queued messages processed successfully');
+    }
+  }, [user, messages]);
+
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme !== 'light');
     document.documentElement.classList.toggle('midnight', theme === 'midnight');
@@ -141,7 +285,7 @@ const App: React.FC = () => {
     document.body.className = bodyClass;
   }, [theme]);
 
-  const handleMqttPayload = useCallback((payload: MqttPayload, topic: string) => {
+  const handleMqttPayload = useCallback(async (payload: MqttPayload, topic: string) => {
     console.log('Received MQTT Payload:', payload, 'on topic:', topic);
 
     // --- Unified Presence Update ---
@@ -149,6 +293,7 @@ const App: React.FC = () => {
         if (p.type === 'chat') return (p as Message).senderId;
         if (p.type === 'typing') return (p as TypingIndicatorPayload).userId;
         if (p.type === 'read_receipt') return (p as ReadReceipt).readerId;
+        if (p.type === 'delivery_receipt') return (p as DeliveryReceipt).readerId;
         if (p.type === 'reaction') return (p as ReactionPayload).reactorId;
         return undefined;
     };
@@ -180,11 +325,64 @@ const App: React.FC = () => {
         return prevContacts;
       });
     }
+    else if (payload.type === 'friend_request_accepted') {
+      console.log('Friend request accepted notification received:', payload);
+      // Reload contacts from database to include the new friend
+      if (user) {
+        loadContactsFromDatabase();
+        console.log('Reloading contacts due to friend request acceptance');
+      }
+    }
     else if (payload.type === 'chat') {
       const message = payload as Message;
       const contactId = message.isGroup 
             ? message.contactId 
             : (message.senderId === user?.id ? message.contactId : message.senderId);
+
+      // Save incoming message to database (if it's not from the current user)
+      if (contactId && message.senderId !== user?.id && user) {
+        // Check if sender is in our contacts list
+        const senderContact = contacts.find(c => c.id === message.senderId);
+        if (!senderContact && !AI_PERSONAS.some(ai => ai.id === message.senderId)) {
+          console.log('Received message from unknown contact, reloading contacts:', message.senderId);
+          loadContactsFromDatabase();
+        }
+        
+        try {
+          // Check if sender is an AI persona
+          const isAiSender = AI_PERSONAS.some(ai => ai.id === message.senderId);
+          
+          if (isAiSender) {
+            // Save AI message to database with new schema
+            await MessageService.saveMessage(message);
+            console.log('AI message from other user saved to database:', message.id);
+          } else {
+            // Regular user message
+            await MessageService.saveMessage(message);
+            console.log('Incoming message saved to database:', message.id);
+            
+            // Send delivery receipt to sender (if it's not from an AI)
+            const deliveryContact = contacts.find(c => c.id === message.senderId);
+            if (!deliveryContact?.isAi) {
+              const topic = message.isGroup 
+                ? `chat/${contactId}` 
+                : `chat/${[user.id, message.senderId].sort().join('-')}`;
+              
+              const deliveryReceipt: DeliveryReceipt = {
+                type: 'delivery_receipt',
+                contactId: contactId,
+                readerId: user.id,
+                messageIds: [message.id]
+              };
+              
+              // Send delivery confirmation
+              mqttService.publish(topic, deliveryReceipt);
+            }
+          }
+        } catch (error) {
+          console.error('Failed to save incoming message to database:', error);
+        }
+      }
 
       // Increment unread count if this chat is not active
       if (user && message.senderId !== user.id && contactId && contactId !== selectedContactId) {
@@ -215,6 +413,37 @@ const App: React.FC = () => {
         return { ...prev, [contactId]: newMessages };
       });
     }
+    else if (payload.type === 'delivery_receipt') {
+        const { contactId, readerId, messageIds } = payload as DeliveryReceipt;
+        if (readerId === user?.id) return; // Don't process our own delivery receipts
+
+        const contact = contacts.find(c => c.id === contactId);
+        const chatKey = contact?.isGroup ? contactId : readerId;
+
+        // Update message status to 'delivered' in local state and database
+        setMessages(prev => {
+            const contactMessages = prev[chatKey] || [];
+            if (!contactMessages.length) return prev;
+
+            let changed = false;
+            const updatedMessages = contactMessages.map(msg => {
+                if (msg.senderId === user?.id && 
+                    (!messageIds || messageIds.includes(msg.id)) && 
+                    msg.status === 'sent') {
+                    changed = true;
+                    // Update in database
+                    MessageService.updateMessageStatus(msg.id, 'delivered').catch(err => 
+                        console.error('Failed to update message status to delivered:', err)
+                    );
+                    return { ...msg, status: 'delivered' as const };
+                }
+                return msg;
+            });
+            
+            if (!changed) return prev;
+            return { ...prev, [chatKey]: updatedMessages };
+        });
+    }
     else if (payload.type === 'read_receipt') {
         const { contactId, readerId } = payload as ReadReceipt;
         if (readerId === user?.id) return; // Don't process our own read receipts
@@ -228,8 +457,14 @@ const App: React.FC = () => {
 
             let changed = false;
             const updatedMessages = contactMessages.map(msg => {
-                if (msg.senderId === user?.id && msg.status !== 'read') {
+                if (msg.senderId === user?.id && 
+                    (!payload.messageIds || payload.messageIds.includes(msg.id)) && 
+                    msg.status !== 'read') {
                     changed = true;
+                    // Update in database
+                    MessageService.updateMessageStatus(msg.id, 'read').catch(err => 
+                        console.error('Failed to update message status to read:', err)
+                    );
                     return { ...msg, status: 'read' as const };
                 }
                 return msg;
@@ -280,16 +515,28 @@ const App: React.FC = () => {
             const updatedMessages = contactMessages.map(msg => {
                 if (msg.id === messageId) {
                     const reactions = msg.reactions || [];
-                    if (action === 'add' && !reactions.includes(emoji)) {
-                        changed = true;
-                        return { ...msg, reactions: [...reactions, emoji] };
+                    if (action === 'add') {
+                        // Check if this exact reaction already exists
+                        const existingReactionIndex = reactions.findIndex(
+                            r => r.emoji === emoji && r.userId === reactorId
+                        );
+                        
+                        if (existingReactionIndex === -1) {
+                            changed = true;
+                            return { 
+                                ...msg, 
+                                reactions: [...reactions, { emoji, userId: reactorId }] 
+                            };
+                        }
                     }
                     if (action === 'remove') {
-                        const newReactions = reactions.filter(r => r !== emoji);
+                        const newReactions = reactions.filter(
+                            r => !(r.emoji === emoji && r.userId === reactorId)
+                        );
                         if (newReactions.length !== reactions.length) {
-                           changed = true;
+                            changed = true;
+                            return { ...msg, reactions: newReactions };
                         }
-                        return { ...msg, reactions: newReactions };
                     }
                 }
                 return msg;
@@ -303,9 +550,10 @@ const App: React.FC = () => {
   
   // MQTT Connection and message handling
   useEffect(() => {
-    if (hasOnboarded && user) {
+    if (user) {
         mqttService.connect(user);
         mqttService.addListener(handleMqttPayload);
+        setMqttStatus(mqttService.getConnectionStatus());
 
         // Subscribe to personal "inbox" topic for invitations
         const personalTopic = `user/${user.id}`;
@@ -320,20 +568,158 @@ const App: React.FC = () => {
             }
         });
 
+        // Load unread messages received while user was offline
+        const loadUnreadMessages = async () => {
+            try {
+                console.log('Checking for unread messages received while offline...');
+                const unreadMessages = await MessageService.getUnreadMessages(user.id);
+                
+                // Update unread counts in state
+                const newUnreadCounts: Record<string, number> = {};
+                Object.entries(unreadMessages).forEach(([contactId, messages]) => {
+                    if (messages.length > 0) {
+                        newUnreadCounts[contactId] = messages.length;
+                        
+                        // Update messages state to include these unread messages
+                        setMessages(prev => {
+                            const existingMessages = prev[contactId] || [];
+                            
+                            // Avoid duplicates by checking IDs
+                            const existingIds = new Set(existingMessages.map(m => m.id));
+                            const newMessages = messages.filter(m => !existingIds.has(m.id));
+                            
+                            if (newMessages.length === 0) return prev;
+                            
+                            // Sort by timestamp after merging
+                            const combined = [...existingMessages, ...newMessages].sort((a, b) => {
+                                const timeA = new Date(a.timestamp).getTime();
+                                const timeB = new Date(b.timestamp).getTime();
+                                return timeA - timeB;
+                            });
+                            
+                            return {...prev, [contactId]: combined};
+                        });
+                    }
+                });
+                
+                // Update unread counts
+                if (Object.keys(newUnreadCounts).length > 0) {
+                    console.log('Found unread messages:', newUnreadCounts);
+                    setUnreadCounts(prev => ({...prev, ...newUnreadCounts}));
+                } else {
+                    console.log('No unread messages found');
+                }
+            } catch (error) {
+                console.error('Error loading unread messages:', error);
+            }
+        };
+        
+        loadUnreadMessages();
+        
+        // Periodically check MQTT connection status
+        const statusInterval = setInterval(() => {
+            const prevStatus = mqttStatus;
+            const status = mqttService.getConnectionStatus();
+            setMqttStatus(status);
+            
+            // If we just reconnected, process any queued messages
+            if (prevStatus !== 'connected' && status === 'connected') {
+                console.log('[App] MQTT reconnected, processing queued messages...');
+                processQueuedMessages();
+                
+                // Also reload unread messages when reconnecting
+                loadUnreadMessages();
+            }
+            
+            // If disconnected or error, try to reconnect
+            if (status === 'disconnected' || status === 'error') {
+                console.log('[App] MQTT appears to be disconnected, attempting to reconnect...');
+                mqttService.checkConnection().then(connected => {
+                    console.log(`[App] MQTT reconnection attempt result: ${connected ? 'connected' : 'failed'}`);
+                });
+            }
+        }, 30000); // Check every 30 seconds
+        
         return () => {
+            clearInterval(statusInterval);
             mqttService.removeListener(handleMqttPayload);
             mqttService.disconnect();
         };
     }
-  }, [hasOnboarded, user, contacts, handleMqttPayload]);
+  }, [user, contacts, handleMqttPayload, processQueuedMessages]);
 
   const selectedContact = useMemo(() =>
     contacts.find(c => c.id === selectedContactId),
     [contacts, selectedContactId]
   );
 
-  const handleSelectContact = useCallback((contactId: string) => {
+  const loadMessagesFromDatabase = useCallback(async (contactId: string, isGroup: boolean = false) => {
+    try {
+      console.log('Loading messages for contact:', contactId, 'isGroup:', isGroup);
+      const dbMessages = await MessageService.getMessages(contactId, isGroup);
+      console.log('Messages loaded from database:', dbMessages);
+      
+      setMessages(prev => ({
+        ...prev,
+        [contactId]: dbMessages
+      }));
+    } catch (error) {
+      console.error('Failed to load messages from database:', error);
+    }
+  }, [setMessages]);
+
+  const handleSelectContact = useCallback(async (contactId: string) => {
     setSelectedContactId(contactId);
+    
+    // Load messages from database for this contact
+    const contact = contacts.find(c => c.id === contactId);
+    if (contact && (contact.isGroup || !contact.isAi)) {
+      await loadMessagesFromDatabase(contactId, contact.isGroup);
+    }
+    
+    // Send read receipts for unread messages and update their status in database
+    if (user && !contact?.isAi) {
+      const chatMessages = messages[contactId] || [];
+      const unreadMessages = chatMessages.filter(msg => 
+        msg.senderId !== user.id && msg.status !== 'read'
+      );
+      
+      if (unreadMessages.length > 0) {
+        // Update message statuses to 'read' in database
+        for (const msg of unreadMessages) {
+          try {
+            await MessageService.updateMessageStatus(msg.id, 'read');
+          } catch (error) {
+            console.error('Failed to update message status to read:', error);
+          }
+        }
+        
+        // Send read receipt via MQTT to notify sender
+        const topic = contact?.isGroup 
+          ? `chat/${contactId}` 
+          : `chat/${[user.id, contactId].sort().join('-')}`;
+        
+        const readReceipt: ReadReceipt = {
+          type: 'read_receipt',
+          contactId: contactId,
+          readerId: user.id,
+          messageIds: unreadMessages.map(m => m.id)
+        };
+        
+        mqttService.publish(topic, readReceipt);
+        
+        // Update local message statuses
+        setMessages(prev => {
+          const contactMessages = prev[contactId] || [];
+          const updatedMessages = contactMessages.map(msg =>
+            unreadMessages.some(unread => unread.id === msg.id) 
+              ? { ...msg, status: 'read' as const }
+              : msg
+          );
+          return { ...prev, [contactId]: updatedMessages };
+        });
+      }
+    }
     
     // Find the first unread message before clearing the count
     const unreadCount = unreadCounts[contactId];
@@ -358,11 +744,11 @@ const App: React.FC = () => {
       delete newCounts[contactId];
       return newCounts;
     });
-  }, [setUnreadCounts, unreadCounts, messages]);
+  }, [setUnreadCounts, unreadCounts, messages, contacts, loadMessagesFromDatabase]);
 
   const triggerAiResponse = useCallback(async (aiContact: Contact, userMessage: Message, groupContext?: { group: Contact }) => {
     setIsLoading(true); // Maybe use a more granular loading state in the future
-    const aiMessageId = crypto.randomUUID();
+    const aiMessageId = generateUUID();
     const initialAiMessage: Message = {
         type: 'chat',
         id: aiMessageId,
@@ -412,6 +798,35 @@ const App: React.FC = () => {
                 return { ...prev, [userMessage.contactId]: updatedMessages };
             });
         }
+
+        // Save the final AI response to database and broadcast to other users
+        if (fullResponse.trim()) {
+            try {
+                const finalAiMessage: Message = {
+                    type: 'chat',
+                    id: aiMessageId,
+                    contactId: userMessage.contactId,
+                    text: fullResponse.trim(),
+                    senderId: aiContact.id,
+                    senderName: aiContact.name,
+                    timestamp: new Date(),
+                    isGroup: !!groupContext,
+                };
+                
+                // Save AI message to database with new schema
+                await MessageService.saveMessage(finalAiMessage);
+                console.log('AI response saved to database:', aiMessageId);
+                
+                // Broadcast to other users via MQTT for group chats
+                if (groupContext && user) {
+                    const topic = `chat/${userMessage.contactId}`;
+                    mqttService.publish(topic, finalAiMessage);
+                    console.log('AI group response broadcasted via MQTT');
+                }
+            } catch (error) {
+                console.error('Failed to save AI response to database:', error);
+            }
+        }
     } catch (error) {
         console.error("Error sending message to Gemini:", error);
         setMessages(prev => {
@@ -435,7 +850,7 @@ const App: React.FC = () => {
     }
   }, [setMessages, setIsLoading]);
 
-  const handleSendMessage = useCallback(async (text: string, attachment?: Attachment) => {
+  const handleSendMessage = useCallback(async (text: string, attachment?: Attachment, replyInfo?: { replyTo: Message['replyTo'] }) => {
     if (!selectedContact || isLoading || !user) return;
 
     let attachmentForMessage: Message['attachment'] | undefined;
@@ -446,17 +861,21 @@ const App: React.FC = () => {
 
     const userMessage: Message = {
       type: 'chat',
-      id: crypto.randomUUID(),
+      id: generateUUID(),
       contactId: selectedContact.id,
       text,
       senderId: user.id,
       senderName: user.name,
       timestamp: new Date(),
-      status: 'sent',
+      status: mqttStatus === 'connected' ? 'sent' : 'queued',
       isGroup: !!selectedContact.isGroup,
       ...(attachmentForMessage && { attachment: attachmentForMessage }),
+      ...(replyInfo && { replyTo: replyInfo.replyTo }),
+      attachmenturl: attachment?.url,
+      attachmentType: attachment?.file ? 'image' : undefined,
     };
 
+    // Update local state immediately for instant UI feedback
     setMessages(prev => ({
       ...prev,
       [selectedContact.id]: [
@@ -464,6 +883,25 @@ const App: React.FC = () => {
         userMessage
       ],
     }));
+
+    // Save message to database (for both AI and non-AI contacts)
+    try {
+      if (attachment?.file) {
+        // If there's a file attachment, use the special method
+        await MessageService.saveMessageWithAttachment(userMessage, attachment.file);
+      } else {
+        // Otherwise use the regular save method
+        await MessageService.saveMessage(userMessage);
+      }
+      
+      console.log('Message saved to database:', userMessage.id);
+      
+      // Update status in database after successful save
+      const finalStatus = mqttStatus === 'connected' ? 'sent' : 'queued';
+      await MessageService.updateMessageStatus(userMessage.id, finalStatus);
+    } catch (error) {
+      console.error('Failed to save message to database:', error);
+    }
 
     if (selectedContact.isAi) {
         triggerAiResponse(selectedContact, userMessage);
@@ -500,62 +938,110 @@ const App: React.FC = () => {
 
   }, [selectedContact, isLoading, setMessages, user, triggerAiResponse]);
 
-  const handleCreateGroup = (name: string, members: string[]) => {
+  const handleCreateGroup = async (name: string, members: string[]) => {
     if (!user) return;
-    const newGroup: Contact = {
-        id: crypto.randomUUID(),
-        name,
-        isGroup: true,
-        isAi: false,
-        creatorId: user.id,
-        memberIds: [...new Set([user.id, ...members])],
-        status: 'online',
-    };
     
-    // 1. Add group locally
-    setContacts(prev => [newGroup, ...prev]);
+    try {
+      // Create group in database
+      const newGroup = await GroupService.createGroup(name, user.id, members);
+      
+      // Add group to local state
+      setContacts(prev => [newGroup, ...prev]);
 
-    // 2. Subscribe to the group topic
-    const topic = `chat/${newGroup.id}`;
-    mqttService.subscribe(topic);
-    
-    // 3. Send invitations to all human members
-    const invitation: Invitation = {
-        type: 'invitation',
-        contact: newGroup,
-        topic: topic
-    };
-    members.forEach(memberId => {
-        const isAi = AI_PERSONAS.some(p => p.id === memberId);
-        if (!isAi) {
-           const memberTopic = `user/${memberId}`;
-           mqttService.publish(memberTopic, invitation);
-        }
-    });
+      // Subscribe to the group topic
+      const topic = `chat/${newGroup.id}`;
+      mqttService.subscribe(topic);
+      
+      // Send invitations to all human members
+      const invitation: Invitation = {
+          type: 'invitation',
+          contact: newGroup,
+          topic: topic
+      };
+      members.forEach(memberId => {
+          const isAi = AI_PERSONAS.some(p => p.id === memberId);
+          if (!isAi) {
+             const memberTopic = `user/${memberId}`;
+             mqttService.publish(memberTopic, invitation);
+          }
+      });
 
-    setNewGroupOpen(false);
-    setSelectedContactId(newGroup.id);
+      setNewGroupOpen(false);
+      setSelectedContactId(newGroup.id);
+    } catch (error) {
+      console.error('Failed to create group:', error);
+      // TODO: Show error message to user
+    }
   }
 
-  const handleUpdateGroup = (groupId: string, name: string, memberIds: string[]) => {
+  const handleUpdateGroup = async (groupId: string, name: string, memberIds: string[]) => {
+    if (!user) return;
+    
+    try {
+      // Update group in database
+      await GroupService.updateGroup(groupId, name, memberIds, user.id);
+      
+      // Update local state
       setContacts(prev => prev.map(c => {
         if (c.id === groupId) {
-          return { ...c, name, memberIds: [...new Set([user!.id, ...memberIds])] };
+          return { ...c, name, memberIds: [...new Set([user.id, ...memberIds])] };
         }
         return c;
       }));
+      
       setEditingGroup(null);
+    } catch (error) {
+      console.error('Failed to update group:', error);
+      // TODO: Show error message to user
+    }
   };
 
-  const handleTogglePinContact = useCallback((contactId: string) => {
-    setContacts(prev => prev.map(c => c.id === contactId ? { ...c, isPinned: !c.isPinned } : c));
-  }, [setContacts]);
+  const handleTogglePinContact = useCallback(async (contactId: string) => {
+    if (!user) return;
+    
+    // Get current pin status
+    const contact = contacts.find(c => c.id === contactId);
+    if (!contact) return;
+    
+    const newPinStatus = !contact.isPinned;
+    
+    // Update local state optimistically
+    setContacts(prev => prev.map(c => c.id === contactId ? { ...c, isPinned: newPinStatus } : c));
+    
+    // Update in database if it's a real contact (not AI)
+    if (!contact.isAi) {
+      try {
+        await FriendsService.togglePin(user.id, contactId, newPinStatus);
+      } catch (error) {
+        console.error('Failed to update pin status in database:', error);
+        // Revert local state on error
+        setContacts(prev => prev.map(c => c.id === contactId ? { ...c, isPinned: !newPinStatus } : c));
+      }
+    }
+  }, [user, contacts, setContacts]);
 
-  const handleReactToMessage = useCallback((messageId: string, emoji: string) => {
+  const handleFriendRequestAccepted = useCallback(async (friendId: string) => {
+    console.log('Friend request accepted for user:', friendId);
+    console.log('Reloading contacts from database...');
+    // Reload contacts from database to include the new friend
+    await loadContactsFromDatabase();
+    console.log('Contacts reloaded successfully');
+  }, [loadContactsFromDatabase]);
+
+  const handleReactToMessage = useCallback(async (messageId: string, emoji: string) => {
     if (!selectedContactId || !user || !selectedContact) return;
 
+    // Find the message to react to
     const message = messages[selectedContactId]?.find(m => m.id === messageId);
-    const action = message?.reactions?.includes(emoji) ? 'remove' : 'add';
+    if (!message) return;
+    
+    // Check if the user already reacted with this emoji
+    const existingReaction = message.reactions?.find(r => 
+      r.emoji === emoji && r.userId === user.id
+    );
+    
+    // Determine if we're adding or removing the reaction
+    const action = existingReaction ? 'remove' : 'add';
 
     // Optimistically update local state
     setMessages(prev => {
@@ -563,14 +1049,36 @@ const App: React.FC = () => {
       const updatedMessages = contactMessages.map(msg => {
         if (msg.id === messageId) {
           const reactions = msg.reactions || [];
-          return reactions.includes(emoji)
-            ? { ...msg, reactions: reactions.filter(r => r !== emoji) }
-            : { ...msg, reactions: [...reactions, emoji] };
+          
+          if (action === 'remove') {
+            // Remove the reaction
+            return {
+              ...msg,
+              reactions: reactions.filter(r => !(r.emoji === emoji && r.userId === user.id))
+            };
+          } else {
+            // Add the reaction
+            return {
+              ...msg,
+              reactions: [...reactions, { emoji, userId: user.id }]
+            };
+          }
         }
         return msg;
       });
       return { ...prev, [selectedContactId]: updatedMessages };
     });
+
+    // Save reaction to database
+    try {
+      if (action === 'add') {
+        await MessageService.addReaction(messageId, user.id, emoji);
+      } else {
+        await MessageService.removeReaction(messageId, user.id, emoji);
+      }
+    } catch (error) {
+      console.error('Failed to save reaction to database:', error);
+    }
 
     // Publish the event to other users
     if (!selectedContact.isAi) {
@@ -595,14 +1103,18 @@ const App: React.FC = () => {
     
     const originalText = forwardingMessage.text;
     const originalAttachment = forwardingMessage.attachment;
-
+    
+    // Close the forwarding modal
     setForwardingMessage(null);
     
+    // Find the target contact
     const targetContact = contacts.find(c => c.id === targetContactId);
     if (!targetContact) return;
-
+    
+    // Switch to the target contact's chat
     handleSelectContact(targetContactId);
-
+    
+    // Create attachment object if needed
     let attachment: Attachment | undefined;
     if (originalAttachment) {
       attachment = {
@@ -611,46 +1123,40 @@ const App: React.FC = () => {
       };
     }
     
-    handleSendMessage(originalText, attachment);
-
-  }, [forwardingMessage, contacts, setMessages, setIsLoading, setSelectedContactId, user, handleSendMessage, handleSelectContact]);
-  
-  const handleInviteUser = useCallback((newUserToInvite: Contact) => {
-    if (!user) return;
-    if (contacts.some(c => c.id === newUserToInvite.id)) {
-        alert("This contact is already in your list.");
-        return;
-    }
-
-    // 1. Add contact locally
-    setContacts(prev => [newUserToInvite, ...prev]);
-
-    // 2. Define shared topic and subscribe
-    const chatTopic = `chat/${[user.id, newUserToInvite.id].sort().join('-')}`;
-    mqttService.subscribe(chatTopic);
-
-    // 3. Create invitation payload
-    const invitation: Invitation = {
-        type: 'invitation',
-        topic: chatTopic,
-        // The contact object for the inviter (me)
-        contact: {
-            id: user.id,
-            name: user.name,
-            isAi: false,
-            status: 'online', 
-        }
+    // Create and send a new message with isForwarded flag
+    const messageId = generateUUID();
+    const newMessage: Message = {
+      type: 'chat',
+      id: messageId,
+      contactId: targetContactId,
+      text: originalText,
+      senderId: user.id,
+      senderName: user.name,
+      timestamp: new Date(),
+      status: 'sent',
+      attachment,
+      isForwarded: true,
+      isGroup: targetContact.isGroup,
     };
     
-    // 4. Publish invitation to the invitee's personal topic
-    const inviteeTopic = `user/${newUserToInvite.id}`;
-    mqttService.publish(inviteeTopic, invitation);
+    // Add message to local state first
+    setMessages(prev => ({
+      ...prev,
+      [targetContactId]: [...(prev[targetContactId] || []), newMessage]
+    }));
+    
+    // Save to database and publish to MQTT
+    await MessageService.saveMessage(newMessage);
+    const topic = targetContact.isGroup 
+      ? `group/${targetContactId}` 
+      : `chat/${targetContactId}/${user.id}`;
+    mqttService.publish(topic, newMessage);
 
-    setInviteModalOpen(false);
-    setSelectedContactId(newUserToInvite.id);
-  }, [user, contacts, setContacts]);
+  }, [forwardingMessage, contacts, user, handleSelectContact, setMessages]);
   
-  const handleAddAiContact = useCallback((aiContact: Contact) => {
+  const handleAddAiContact = useCallback(async (aiContact: Contact) => {
+    if (!user) return;
+    
     // If contact already exists, just select it
     if (contacts.some(c => c.id === aiContact.id)) {
         setSelectedContactId(aiContact.id);
@@ -660,9 +1166,18 @@ const App: React.FC = () => {
     const newContactWithStatus = { ...aiContact, status: 'online' as const };
     setContacts(prev => [newContactWithStatus, ...prev]);
     setSelectedContactId(aiContact.id);
-  }, [contacts, setContacts]);
+    
+    // Save to database
+    try {
+      await FriendsService.addAiContact(user.id, aiContact.id);
+    } catch (error) {
+      console.error('Failed to add AI contact to database:', error);
+    }
+  }, [contacts, setContacts, user]);
   
-  const handleToggleAiContact = useCallback((aiContactId: string, shouldBeEnabled: boolean) => {
+  const handleToggleAiContact = useCallback(async (aiContactId: string, shouldBeEnabled: boolean) => {
+    if (!user) return;
+    
     setContacts(prevContacts => {
         const contactExists = prevContacts.some(c => c.id === aiContactId);
 
@@ -670,6 +1185,10 @@ const App: React.FC = () => {
             // Add the contact
             const contactToAdd = AI_PERSONAS.find(p => p.id === aiContactId);
             if (contactToAdd) {
+                // Save to database
+                FriendsService.addAiContact(user.id, aiContactId).catch(err => {
+                  console.error('Failed to add AI contact to database:', err);
+                });
                 return [...prevContacts, contactToAdd];
             }
         } else if (!shouldBeEnabled && contactExists) {
@@ -677,24 +1196,42 @@ const App: React.FC = () => {
             if (selectedContactId === aiContactId) {
                 setSelectedContactId(null);
             }
+            // Remove from database
+            FriendsService.removeAiContact(user.id, aiContactId).catch(err => {
+              console.error('Failed to remove AI contact from database:', err);
+            });
+            
             return prevContacts.filter(c => c.id !== aiContactId);
         }
         // No change needed
         return prevContacts;
     });
-  }, [setContacts, selectedContactId]);
+  }, [setContacts, selectedContactId, user]);
 
-  const handleLogout = useCallback(() => {
-    // Keep user profile for quicker login, but clear session data.
-    localStorage.removeItem('hasOnboarded');
-    localStorage.removeItem('contacts');
-    localStorage.removeItem('messages');
-    localStorage.removeItem('unreadCounts');
-    localStorage.removeItem('theme');
-    localStorage.removeItem('sidebarWidth');
-    mqttService.disconnect();
-    window.location.reload();
-  }, []);
+  const handleLogout = useCallback(async () => {
+    try {
+      // Disconnect from MQTT service
+      mqttService.disconnect();
+      
+      // Clear local storage data (keeping theme, sidebarWidth, and user session data)
+      localStorage.removeItem('userProfile'); // Clear user profile as well
+      localStorage.removeItem('user'); // Make sure to clear the 'user' item too
+      
+      // Properly log out using Supabase auth
+      await logout();
+      
+      console.log('Logout successful, redirecting to login page');
+      
+      // Redirect to login page after a small delay to ensure Supabase has time to process the logout
+      setTimeout(() => {
+        window.location.href = '/login';
+      }, 100);
+    } catch (error) {
+      console.error('Error during logout:', error);
+      // Still redirect to login page even if there's an error
+      window.location.href = '/login';
+    }
+  }, [logout]);
 
   const handleMouseDown = useCallback((_e: React.MouseEvent) => {
     isResizing.current = true;
@@ -720,13 +1257,18 @@ const App: React.FC = () => {
     window.addEventListener('mouseup', handleMouseUp);
   }, [setSidebarWidth]);
 
-
-  if (!hasOnboarded || !user) {
-    return <Onboarding onComplete={(newUser) => {
-      setUser(newUser);
-      setHasOnboarded(true);
-      // Don't auto-select a contact, let the welcome screen show.
-    }} />;
+  // If no user, show a loading state instead of rendering nothing
+  if (!user) {
+    console.log('No user profile found in App component');
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-900">
+        <div className="text-center p-8 max-w-md mx-auto bg-slate-800 rounded-lg shadow-lg">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto mb-4"></div>
+          <h2 className="text-xl text-white mb-2">Loading your profile...</h2>
+          <p className="text-slate-400">If this persists, please try logging out and back in again.</p>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -746,6 +1288,8 @@ const App: React.FC = () => {
           onLogout={handleLogout}
           onTogglePin={handleTogglePinContact}
           onInviteUser={() => setInviteModalOpen(true)}
+          onFriendRequests={() => setFriendRequestsOpen(true)}
+          typingIndicators={typingIndicators}
         />
         <div
             onMouseDown={handleMouseDown}
@@ -803,8 +1347,13 @@ const App: React.FC = () => {
        <InviteUserModal
         isOpen={isInviteModalOpen}
         onClose={() => setInviteModalOpen(false)}
-        onInvite={handleInviteUser}
-        existingContacts={contacts}
+        currentUser={user!}
+      />
+      <FriendRequestsModal
+        isOpen={isFriendRequestsOpen}
+        onClose={() => setFriendRequestsOpen(false)}
+        currentUser={user!}
+        onRequestAccepted={handleFriendRequestAccepted}
       />
       <ForwardMessageModal
         isOpen={!!forwardingMessage}
@@ -812,6 +1361,7 @@ const App: React.FC = () => {
         contacts={contacts}
         onForward={handleForwardMessage}
         currentUser={user}
+        message={forwardingMessage || undefined}
       />
       {lightboxImage && (
         <Lightbox src={lightboxImage} onClose={() => setLightboxImage(null)} />

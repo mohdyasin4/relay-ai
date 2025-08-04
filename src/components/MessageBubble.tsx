@@ -1,12 +1,15 @@
 
 import React, { useState } from 'react';
 import type { Message, User, Contact } from '../types';
-import CheckIcon from './icons/CheckIcon';
-import CheckDoubleIcon from './icons/CheckDoubleIcon';
+import { Check, Clock } from 'lucide-react';
+import { CheckCheck } from 'lucide-react';
 import ReactionIcon from './icons/ReactionIcon';
 import ForwardIcon from './icons/ForwardIcon';
+import ReplyIcon from './icons/ReplyIcon';
 import EmojiPicker from './EmojiPicker';
 import GeneratedAvatar from './GeneratedAvatar';
+import { DateUtils } from '../utils/dateUtils';
+import moment from 'moment';
 
 interface MessageBubbleProps {
   message: Message;
@@ -16,24 +19,27 @@ interface MessageBubbleProps {
   onImageClick?: (url: string) => void;
   onReact: (messageId: string, emoji: string) => void;
   onForward: (message: Message) => void;
+  onReply?: (message: Message) => void;
 }
 
 const ReadReceipt: React.FC<{ status: Message['status'] }> = ({ status }) => {
   if (!status) return null;
   const iconClass = "w-4 h-4"; // A bit smaller to match text size
   switch (status) {
+    case 'queued':
+      return <Clock className={`${iconClass} text-orange-400`} />;
     case 'sent':
-      return <CheckIcon className={iconClass} />;
+      return <Check className={iconClass} />;
     case 'delivered':
-       return <CheckDoubleIcon className={iconClass} />;
+       return <CheckCheck className={iconClass} />;
     case 'read':
-      return <CheckDoubleIcon className={`${iconClass} text-emerald-400`} />;
+      return <CheckCheck className={`${iconClass} text-emerald-400`} />;
     default:
       return null;
   }
 };
 
-const MessageBubble: React.FC<MessageBubbleProps> = ({ message, currentUser, isGroup, allContacts, onImageClick, onReact, onForward }) => {
+const MessageBubble: React.FC<MessageBubbleProps> = ({ message, currentUser, isGroup, allContacts, onImageClick, onReact, onForward, onReply }) => {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
   const isUser = message.senderId === currentUser.id;
@@ -43,7 +49,8 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, currentUser, isG
     return null;
   }
   
-  const time = new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const time = DateUtils.formatMessageTime(message.timestamp);
+  const tooltipTime = DateUtils.formatTooltip(message.timestamp);
   const hasText = message.text && message.text.trim().length > 0;
   
   const showSenderName = isGroup && !isUser;
@@ -74,7 +81,20 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, currentUser, isG
         </button>
         {showEmojiPicker && <EmojiPicker onEmojiSelect={handleEmojiSelect} onClose={() => setShowEmojiPicker(false)} />}
       </div>
-      <button onClick={() => onForward(message)} className="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors" aria-label="Forward message">
+      {onReply && (
+        <button 
+          onClick={() => onReply(message)} 
+          className="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors" 
+          aria-label="Reply to message"
+        >
+          <ReplyIcon className="w-5 h-5 text-slate-600 dark:text-slate-400"/>
+        </button>
+      )}
+      <button 
+        onClick={() => onForward(message)} 
+        className="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors" 
+        aria-label="Forward message"
+      >
         <ForwardIcon className="w-5 h-5 text-slate-600 dark:text-slate-400"/>
       </button>
     </div>
@@ -121,10 +141,21 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, currentUser, isG
                             <span>Forwarded</span>
                         </div>
                     )}
+                    {message.replyTo && (
+                        <div className={`text-sm flex flex-col gap-1 opacity-80 mb-2 p-2 rounded-lg border-l-2 ${
+                            isUser ? 'bg-indigo-500/30 border-indigo-300 text-indigo-100' : 'bg-slate-200 dark:bg-slate-600/50 border-slate-400 dark:border-slate-500 text-slate-600 dark:text-slate-300'
+                        }`}>
+                            <div className="flex items-center gap-1.5">
+                                <ReplyIcon className="w-3.5 h-3.5" />
+                                <span className="font-medium">{message.replyTo.senderName}</span>
+                            </div>
+                            <p className="truncate">{message.replyTo.text}</p>
+                        </div>
+                    )}
                     {message.attachment?.type === 'image' && (
                     <div 
                         className="relative cursor-pointer"
-                        onClick={() => onImageClick?.(message.attachment.url)}
+                        onClick={() => onImageClick?.(message.attachment?.url || '')}
                     >
                         <img
                         src={message.attachment.url}
@@ -143,23 +174,50 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, currentUser, isG
             </div>
             
             <div className={`flex items-center gap-1.5 px-1 text-xs text-slate-500 dark:text-slate-400`}>
-                <span>{time}</span>
+                <span title={tooltipTime}>{time}</span>
                 {isUser && <ReadReceipt status={message.status} />}
             </div>
             
             {message.reactions && message.reactions.length > 0 && (
               <div className="relative flex">
-                <div className="flex gap-0.5 items-center bg-slate-100 dark:bg-slate-800/80 rounded-full px-1 py-0.5 shadow-sm border border-slate-200 dark:border-slate-700">
-                  {message.reactions.map((emoji, i) => (
-                    <button
-                      key={`${emoji}-${i}`}
-                      onClick={() => onReact(message.id, emoji)}
-                      className="text-lg p-1 rounded-full hover:bg-slate-200 dark:hover:bg-slate-700"
-                      aria-label={`Remove ${emoji} reaction`}
-                    >
-                      {emoji}
-                    </button>
-                  ))}
+                <div className="flex flex-wrap gap-0.5 items-center bg-slate-100 dark:bg-slate-800/80 rounded-full px-1.5 py-0.5 shadow-sm border border-slate-200 dark:border-slate-700">
+                  {/* Group reactions by emoji */}
+                  {Object.entries(
+                    message.reactions.reduce((acc: {[emoji: string]: string[]}, reaction) => {
+                      if (!acc[reaction.emoji]) acc[reaction.emoji] = [];
+                      
+                      const reactor = allContacts.find(c => c.id === reaction.userId);
+                      const reactorName = reactor?.name || 
+                                         (reaction.userId === currentUser.id ? 'You' : 'Unknown');
+                      
+                      acc[reaction.emoji].push(reactorName);
+                      return acc;
+                    }, {})
+                  ).map(([emoji, reactors]) => {
+                    const myReaction = message.reactions?.some(r => 
+                      r.emoji === emoji && r.userId === currentUser.id
+                    );
+                    
+                    return (
+                      <button
+                        key={emoji}
+                        onClick={() => onReact(message.id, emoji)}
+                        className={`text-lg p-1 rounded-full hover:bg-slate-200 dark:hover:bg-slate-700 relative group ${
+                          myReaction ? 'ring-1 ring-indigo-400 dark:ring-indigo-500' : ''
+                        }`}
+                        aria-label={myReaction ? `Remove ${emoji} reaction` : `React with ${emoji}`}
+                        title={reactors.join(', ')}
+                      >
+                        <span>{emoji}</span>
+                        <span className="ml-1 text-xs">{reactors.length > 1 ? reactors.length : ''}</span>
+                        
+                        {/* Tooltip with reactor names */}
+                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-slate-800 text-white text-xs rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap pointer-events-none z-10">
+                          {reactors.join(', ')}
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             )}

@@ -5,8 +5,11 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import ProtectedRoute from './components/auth/ProtectedRoute';
 import LoginPage from './components/auth/LoginPage';
 import RegisterPage from './components/auth/RegisterPage';
+import AuthCallback from './routes/AuthCallback';
 import App from './App';
-import './index.css';
+import { ThemeProvider } from "@/components/theme-provider"
+import "./index.css";
+import ForgotPasswordPage from './components/auth/ForgotPasswordPage';
 
 // Auth guard component to handle routing
 const AuthGuard: React.FC = () => {
@@ -34,6 +37,13 @@ const AuthGuard: React.FC = () => {
         path="/register" 
         element={user ? <Navigate to="/app" replace /> : <RegisterPage />} 
       />
+      <Route
+        path='/forgot-password'
+        element={user ? <Navigate to="/app" replace/> : <ForgotPasswordPage />}
+      />
+      
+      {/* Auth callback route */}
+      <Route path="/auth/callback" element={<AuthCallback />} />
       
       {/* Protected routes */}
       <Route 
@@ -68,10 +78,12 @@ if (!rootElement) {
 const root = ReactDOM.createRoot(rootElement);
 root.render(
   <React.StrictMode>
+    <ThemeProvider defaultTheme='dark' storageKey='vite-ui-theme'>
     <AuthProvider>
       <Router>
         <AuthGuard />
       </Router>
     </AuthProvider>
+    </ThemeProvider>
   </React.StrictMode>
 );
