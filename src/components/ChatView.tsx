@@ -1,8 +1,25 @@
+// Polling interval for presence updates (in ms)
+const PRESENCE_POLL_INTERVAL = 10000;
 
-import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
-import type { Contact, Message, Attachment, User, ReadReceipt, TypingIndicatorPayload } from '../types';
+import React, {
+  useState,
+  useRef,
+  useEffect,
+  useMemo,
+  useCallback
+} from 'react';
+
+import { DatabaseService } from '../services/databaseService';
+import { mqttService } from '../services/mqttService';
+import { fileToBase64 } from '../utils/imageUtils';
+import { getTimelineDate, formatPresence, DateUtils } from '../utils/dateUtils';
+
 import GeneratedAvatar from './GeneratedAvatar';
 import MessageBubble from './MessageBubble';
+import DateSeparator from './DateSeparator';
+import NewMessagesSeparator from './NewMessagesSeparator';
+import MentionSuggestions from './MentionSuggestions';
+
 import SendIcon from './icons/SendIcon';
 import AttachIcon from './icons/AttachIcon';
 import CloseIcon from './icons/CloseIcon';
@@ -11,12 +28,14 @@ import PlusIcon from './icons/PlusIcon';
 import CheckIcon from './icons/CheckIcon';
 import ReplyIcon from './icons/ReplyIcon';
 import ChatBubbleLeftRightIcon from './icons/ChatBubbleLeftRightIcon';
-import { fileToBase64 } from '../utils/imageUtils';
-import { getTimelineDate, formatPresence, DateUtils } from '../utils/dateUtils';
-import DateSeparator from './DateSeparator';
-import NewMessagesSeparator from './NewMessagesSeparator';
-import { mqttService } from '../services/mqttService';
-import MentionSuggestions from './MentionSuggestions';
+
+import type {
+  Contact,
+  Message,
+  Attachment,
+  User,
+  ReadReceipt
+} from '../types';
 
 interface ChatViewProps {
   contact: Contact | undefined;
@@ -25,7 +44,11 @@ interface ChatViewProps {
   messages: Message[];
   isLoading: boolean;
   typingIndicators: Record<string, string>;
-  onSendMessage: (text: string, attachment?: Attachment, replyInfo?: { replyTo: Message['replyTo'] }) => void;
+  onSendMessage: (
+    text: string,
+    attachment?: Attachment,
+    replyInfo?: { replyTo: Message['replyTo'] }
+  ) => void;
   onImageClick: (url: string) => void;
   onEditGroup: (group: Contact) => void;
   onReact: (messageId: string, emoji: string) => void;
@@ -38,88 +61,124 @@ interface ChatViewProps {
 }
 
 interface SuggestionState {
-    isOpen: boolean;
-    query: string;
-    suggestions: Contact[];
-    triggerIndex: number | null;
-    activeIndex: number;
+  isOpen: boolean;
+  query: string;
+  suggestions: Contact[];
+  triggerIndex: number | null;
+  activeIndex: number;
 }
 
 const TypingIndicator: React.FC = () => (
   <div className="flex items-center space-x-1.5 p-4">
-    <div className="w-2.5 h-2.5 bg-slate-400 rounded-full animate-pulse [animation-delay:-0.3s]"></div>
-    <div className="w-2.5 h-2.5 bg-slate-400 rounded-full animate-pulse [animation-delay:-0.15s]"></div>
-    <div className="w-2.5 h-2.5 bg-slate-400 rounded-full animate-pulse"></div>
+    <div className="w-2.5 h-2.5 bg-slate-400 rounded-full animate-pulse [animation-delay:-0.3s]" />
+    <div className="w-2.5 h-2.5 bg-slate-400 rounded-full animate-pulse [animation-delay:-0.15s]" />
+    <div className="w-2.5 h-2.5 bg-slate-400 rounded-full animate-pulse" />
   </div>
 );
 
-const ChatView: React.FC<ChatViewProps> = ({ 
-    contact, currentUser, contacts, messages, isLoading, typingIndicators, 
-    onSendMessage, onImageClick, onEditGroup, onReact, onForward,
-    onNewGroup, onInviteUser, onAddAiContact, aiPersonas,
-    firstUnreadMessageId
+const ChatView: React.FC<ChatViewProps> = ({
+  contact,
+  currentUser,
+  contacts,
+  messages,
+  isLoading,
+  typingIndicators,
+  onSendMessage,
+  onImageClick,
+  onEditGroup,
+  onReact,
+  onForward,
+  onNewGroup,
+  onInviteUser,
+  onAddAiContact,
+  aiPersonas,
+  firstUnreadMessageId
 }) => {
+  const [liveContact, setLiveContact] = useState<Contact | undefined>(contact);
   const [inputText, setInputText] = useState('');
   const [attachment, setAttachment] = useState<Attachment | null>(null);
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
-  const typingTimeoutRef = useRef<number | null>(null);
-  const separatorRef = useRef<HTMLDivElement>(null);
-  
   const [suggestionState, setSuggestionState] = useState<SuggestionState>({
     isOpen: false,
     query: '',
     suggestions: [],
     triggerIndex: null,
-    activeIndex: 0,
+    activeIndex: 0
   });
 
-  // Move all hooks to the top before any conditional logic
-  const allKnownContacts = useMemo(() => [...contacts, ...aiPersonas], [contacts, aiPersonas]);
-  
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const typingTimeoutRef = useRef<number | null>(null);
+  const separatorRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setLiveContact(contact);
+
+    if (!contact || contact.isAi) return;
+
+    async function pollPresence() {
+      const updated = await DatabaseService.getUserById(contact.id);
+      if (updated) {
+        setLiveContact(prev => ({ ...prev, ...updated }));
+      }
+    }
+
+    pollPresence();
+    const interval = setInterval(pollPresence, PRESENCE_POLL_INTERVAL);
+
+    return () => clearInterval(interval);
+  }, [contact]);
+
+  const allKnownContacts = useMemo(
+    () => [...contacts, ...aiPersonas],
+    [contacts, aiPersonas]
+  );
+
   const messagesWithDates = useMemo(() => {
     const grouped: (Message | { type: 'date_marker'; id: string; date: string })[] = [];
     let lastDate: string | null = null;
 
     messages.forEach(message => {
-      // Use DateUtils.getMoment to ensure consistent timestamp handling
       const messageDate = DateUtils.getMoment(message.timestamp).toDate();
       const timelineDate = getTimelineDate(messageDate);
 
       if (timelineDate !== lastDate) {
-        grouped.push({ type: 'date_marker', id: `date-${timelineDate}-${message.id}`, date: timelineDate });
+        grouped.push({
+          type: 'date_marker',
+          id: `date-${timelineDate}-${message.id}`,
+          date: timelineDate
+        });
         lastDate = timelineDate;
       }
+
       grouped.push(message);
     });
+
     return grouped;
   }, [messages]);
 
   const sendReadReceipt = useCallback(() => {
-    if (!contact || contact.isAi || !messages.length || !currentUser) {
-      return;
-    }
+    if (!contact || contact.isAi || !messages.length || !currentUser) return;
 
     const lastMessage = messages[messages.length - 1];
-    if (lastMessage.senderId !== currentUser.id) {
-        const topic = contact.isGroup 
-            ? `chat/${contact.id}` 
-            : `chat/${[currentUser.id, contact.id].sort().join('-')}`;
-        
-        const payload: ReadReceipt = {
-            type: 'read_receipt',
-            contactId: contact.id,
-            readerId: currentUser.id,
-        };
-        mqttService.publish(topic, payload);
-    }
+    if (lastMessage.senderId === currentUser.id) return;
+
+    const topic = contact.isGroup
+      ? `chat/${contact.id}`
+      : `chat/${[currentUser.id, contact.id].sort().join('-')}`;
+
+    const payload: ReadReceipt = {
+      type: 'read_receipt',
+      contactId: contact.id,
+      readerId: currentUser.id
+    };
+
+    mqttService.publish(topic, payload);
   }, [contact, currentUser, messages]);
 
   useEffect(() => {
     if (firstUnreadMessageId && separatorRef.current) {
-      // Wait a moment for the component to render properly before scrolling
       setTimeout(() => {
         separatorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }, 300);
@@ -127,32 +186,31 @@ const ChatView: React.FC<ChatViewProps> = ({
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
   }, [messages, isLoading, typingIndicators, firstUnreadMessageId, contact?.id]);
-  
+
   useEffect(() => {
-      setInputText('');
-      setAttachment(null);
-      setReplyingTo(null);
-      setSuggestionState(p => ({...p, isOpen: false}));
+    setInputText('');
+    setAttachment(null);
+    setReplyingTo(null);
+    setSuggestionState(prev => ({ ...prev, isOpen: false }));
   }, [contact]);
-  
+
   useEffect(() => {
-    if (!contact || contact.isAi || !messages.length || !currentUser) {
-        return;
-    }
-    
+    if (!contact || contact.isAi || !messages.length || !currentUser) return;
+
     const lastMessage = messages[messages.length - 1];
-    if (lastMessage && lastMessage.senderId !== currentUser.id) {
-        const topic = contact.isGroup 
-            ? `chat/${contact.id}` 
-            : `chat/${[currentUser.id, contact.id].sort().join('-')}`;
-        
-        const payload: ReadReceipt = {
-            type: 'read_receipt',
-            contactId: contact.id,
-            readerId: currentUser.id,
-        };
-        mqttService.publish(topic, payload);
-    }
+    if (lastMessage.senderId === currentUser.id) return;
+
+    const topic = contact.isGroup
+      ? `chat/${contact.id}`
+      : `chat/${[currentUser.id, contact.id].sort().join('-')}`;
+
+    const payload: ReadReceipt = {
+      type: 'read_receipt',
+      contactId: contact.id,
+      readerId: currentUser.id
+    };
+
+    mqttService.publish(topic, payload);
   }, [messages, contact, currentUser]);
 
   useEffect(() => {
@@ -441,14 +499,14 @@ const ChatView: React.FC<ChatViewProps> = ({
   }
 
   const renderPresence = () => {
-    if (contact.isGroup) {
+    if (liveContact?.isGroup) {
         return <p className="text-sm text-slate-500 dark:text-slate-400 truncate">{getMemberNames()}</p>;
     }
 
-    const presenceText = formatPresence(contact);
-    const statusColor = contact.status === 'online' 
+    const presenceText = liveContact ? formatPresence(liveContact) : '';
+    const statusColor = liveContact?.status === 'online' 
       ? 'bg-green-500' 
-      : contact.status === 'away' ? 'bg-amber-500' : 'hidden';
+      : liveContact?.status === 'away' ? 'bg-amber-500' : 'hidden';
 
     return (
         <div className="flex items-center gap-2">
@@ -463,15 +521,15 @@ const ChatView: React.FC<ChatViewProps> = ({
     <div className="flex flex-col h-full bg-slate-100 dark:bg-slate-900">
       <header className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center gap-3 bg-slate-50/80 dark:bg-slate-900/80 backdrop-blur-sm z-10">
         <GeneratedAvatar 
-            name={contact.name} 
-            isGroup={contact.isGroup} 
-            memberIds={contact.memberIds} 
-            creatorId={contact.creatorId}
+            name={liveContact?.name || contact.name} 
+            isGroup={liveContact?.isGroup ?? contact.isGroup} 
+            memberIds={liveContact?.memberIds ?? contact.memberIds} 
+            creatorId={liveContact?.creatorId ?? contact.creatorId}
             allContacts={allKnownContacts}
             currentUser={currentUser}
         />
         <div className="flex-1 overflow-hidden">
-            <h2 className="text-lg font-bold text-slate-800 dark:text-slate-100 truncate">{contact.name}</h2>
+            <h2 className="text-lg font-bold text-slate-800 dark:text-slate-100 truncate">{liveContact?.name || contact.name}</h2>
             {renderPresence()}
         </div>
         {contact.isGroup && (

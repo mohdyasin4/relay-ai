@@ -92,8 +92,7 @@ static async getMessages(contactId: string, isGroup: boolean = false, limit: num
         replyToSenderName,
         sender:User!senderId(name)
       `)
-      .order('timestamp', { ascending: true })
-      .limit(limit);
+      .order('timestamp', { ascending: true });
 
     if (isGroup) {
       // For group messages, filter by groupId
@@ -115,61 +114,31 @@ static async getMessages(contactId: string, isGroup: boolean = false, limit: num
       // 1. Current user sent to contactId (senderId = currentUserId AND recipientId = contactId)
       // 2. ContactId sent to current user (senderId = contactId AND recipientId = currentUserId)  
       // 3. AI sent to current user (aiSenderId = contactId AND recipientId = currentUserId)
-      console.log('Debug - currentUserId:', currentUserId, 'contactId:', contactId);
-console.log('Debug - Looking for messages where:');
-console.log('  - senderId =', currentUserId, 'AND recipientId =', contactId);
-console.log('  - senderId =', contactId, 'AND recipientId =', currentUserId);
-console.log('  - aiSenderId =', contactId, 'AND recipientId =', currentUserId);
-      // Build the OR condition properly
-      const conditions = [
-        `senderId.eq.${currentUserId},recipientId.eq.${contactId}`,
-        `senderId.eq.${contactId},recipientId.eq.${currentUserId}`,
-        `aiSenderId.eq.${contactId},recipientId.eq.${currentUserId}`
-      ];
-
-      // Apply the OR filter with proper syntax
-      query = query.or(conditions.map(condition => `and(${condition})`).join(','));
-      
-      // Also ensure we're only getting direct messages (not group messages)
-      query = query.is('groupId', null);
+      // Use .or() for the OR condition
+      query = query.is('groupId', null)
+        .or(`and(senderId.eq.${currentUserId},recipientId.eq.${contactId}),and(senderId.eq.${contactId},recipientId.eq.${currentUserId}),and(aiSenderId.eq.${contactId},recipientId.eq.${currentUserId})`);
     }
+
+    // Remove .limit(limit) to ensure all messages are fetched
 
     const { data: messages, error } = await query;
 
     if (error) {
       console.error('Error fetching messages:', error);
-      console.error('Query details:', { contactId, isGroup, limit });
       return [];
     }
 
-    // Debug: Log the raw timestamp format from database
-    if (messages && messages.length > 0) {
-      console.log(`Found ${messages.length} messages for ${isGroup ? 'group' : 'direct'} chat:`, contactId);
-      console.log('Database timestamp sample:', messages[0].timestamp);
-    } else {
-      console.log(`No messages found for ${isGroup ? 'group' : 'direct'} chat:`, contactId);
-    }
-
-    // Fetch reactions for all messages
     if (!messages || messages.length === 0) {
       return [];
     }
-    
+
+    // Fetch reactions for all messages
     const messageIds = messages.map(msg => msg.id);
-    
     const { data: reactions, error: reactionsError } = await supabase
       .from('Reaction')
       .select('*')
       .in('messageId', messageIds);
-    
-    if (reactionsError) {
-      console.error('Error fetching reactions:', reactionsError);
-      // Continue without reactions rather than failing completely
-    }
-    
-    // Group reactions by messageId
     const reactionsByMessageId: Record<string, { emoji: string, userId: string }[]> = {};
-    
     if (reactions) {
       for (const reaction of reactions) {
         if (!reactionsByMessageId[reaction.messageId]) {
@@ -183,7 +152,7 @@ console.log('  - aiSenderId =', contactId, 'AND recipientId =', currentUserId);
     }
 
     // Convert database messages to app message format
-    return messages?.map(msg => ({
+    return messages.map(msg => ({
       type: 'chat' as const,
       id: msg.id,
       contactId: msg.groupId || msg.recipientId || '',
@@ -208,7 +177,7 @@ console.log('  - aiSenderId =', contactId, 'AND recipientId =', currentUserId);
           senderName: msg.replyToSenderName || 'Unknown'
         }
       })
-    })) || [];
+    }));
   } catch (error) {
     console.error('Error fetching messages:', error);
     return [];
@@ -418,19 +387,17 @@ console.log('  - aiSenderId =', contactId, 'AND recipientId =', currentUserId);
     const supabase = createClient();
     
     try {
-      // Get the user's last logout time to find messages received while offline
+      // Get the user's last seen time to find messages received while offline
       const { data: userData, error: userError } = await supabase
         .from('User')
-        .select('lastLogoutAt')
+        .select('lastSeen')
         .eq('id', userId)
         .single();
-      
       if (userError) {
-        console.error('Error fetching user last logout time:', userError);
+        console.error('Error fetching user last seen time:', userError);
       }
-      
-      const lastLogoutTime = userData?.lastLogoutAt ? new Date(userData.lastLogoutAt) : null;
-      console.log('User last logout time:', lastLogoutTime?.toISOString() || 'None');
+      const lastSeenTime = userData?.lastSeen ? new Date(userData.lastSeen) : null;
+      console.log('User last seen time:', lastSeenTime?.toISOString() || 'None');
       
       // Get the groups the user is a member of
       const { data: groupData, error: groupError } = await supabase
@@ -465,9 +432,9 @@ console.log('  - aiSenderId =', contactId, 'AND recipientId =', currentUserId);
         .neq('senderId', userId)
         .neq('status', 'read');
       
-      // If we have a last logout time, only get messages after that time
-      if (lastLogoutTime) {
-        directMessageQuery = directMessageQuery.gte('timestamp', lastLogoutTime.toISOString());
+      // If we have a last seen time, only get messages after that time
+      if (lastSeenTime) {
+        directMessageQuery = directMessageQuery.gte('timestamp', lastSeenTime.toISOString());
       }
       
       const { data: directMessages, error: directError } = await directMessageQuery;
@@ -500,9 +467,9 @@ console.log('  - aiSenderId =', contactId, 'AND recipientId =', currentUserId);
           .neq('senderId', userId)
           .neq('status', 'read');
         
-        // If we have a last logout time, only get messages after that time
-        if (lastLogoutTime) {
-          groupMessageQuery = groupMessageQuery.gte('timestamp', lastLogoutTime.toISOString());
+        // If we have a last seen time, only get messages after that time
+        if (lastSeenTime) {
+          groupMessageQuery = groupMessageQuery.gte('timestamp', lastSeenTime.toISOString());
         }
         
         const { data: groupMsgs, error: groupMsgError } = await groupMessageQuery;

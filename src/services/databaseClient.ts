@@ -46,32 +46,33 @@ class DatabaseClient {
   async getContacts(): Promise<Contact[]> {
     const supabase = createClient();
     const { data: authData } = await supabase.auth.getUser();
-    
+
     if (!authData.user) {
       return [];
     }
-    
-    // Get contacts with a join to get the contact user data
+
+    // Get contacts with a join to get the contact user data, including lastSeen
     const { data, error } = await supabase
       .from('Contact')
       .select(`
         *,
-        contactUser:User!contactUserId(id, name, status)
+        contactUser:User!contactUserId(id, name, status, lastSeen)
       `)
       .eq('userId', authData.user.id);
-    
+
     if (error || !data) {
       console.error('Error fetching contacts:', error);
       return [];
     }
-    
-    // Transform to application Contact type
+
+    // Transform to application Contact type, merging isPinned, isAi, and lastSeen
     return data.map(contact => ({
       id: contact.contactUserId,
       name: contact.contactUser.name,
       status: contact.contactUser.status,
+      lastSeen: contact.contactUser.lastSeen,
       isPinned: contact.isPinned || false,
-      isAi: false
+      isAi: contact.isAi || false
     }));
   }
   

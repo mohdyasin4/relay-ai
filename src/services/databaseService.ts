@@ -16,21 +16,22 @@ export class DatabaseService {
       const supabase = createClient();
       const { data, error } = await supabase
         .from('User')
-        .select('*')
+        .select('id, name, email, avatarUrl, status, lastSeen')
         .eq('id', userId)
         .single();
-      
+
       if (error || !data) {
         console.error('Error fetching user:', error);
         return null;
       }
-      
+
       return {
         id: data.id,
         name: data.name,
         email: data.email,
         avatarUrl: data.avatarUrl,
-        status: data.status || 'offline'
+        status: data.status || 'offline',
+        lastSeen: data.lastSeen || null
       };
     }
     
@@ -39,15 +40,16 @@ export class DatabaseService {
       const user = await prisma.user.findUnique({
         where: { id: userId }
       });
-      
+
       if (!user) return null;
-      
+
       return {
         id: user.id,
         name: user.name,
         email: user.email,
         avatarUrl: user.avatarUrl,
-        status: user.status as 'online' | 'offline' | 'away'
+        status: user.status as 'online' | 'offline' | 'away',
+        lastSeen: user.lastSeen || null
       };
     } catch (error) {
       console.error('Error fetching user with Prisma:', error);
@@ -90,7 +92,8 @@ export class DatabaseService {
         name: data.name,
         email: data.email,
         avatarUrl: data.avatarUrl,
-        status: data.status
+        status: data.status,
+        lastSeen: data.lastSeen || null
       };
     }
     
@@ -116,7 +119,8 @@ export class DatabaseService {
         name: user.name,
         email: user.email,
         avatarUrl: user.avatarUrl,
-        status: user.status as 'online' | 'offline' | 'away'
+        status: user.status as 'online' | 'offline' | 'away',
+        lastSeen: user.lastSeen || null
       };
     } catch (error) {
       console.error('Error upserting user with Prisma:', error);
@@ -128,43 +132,43 @@ export class DatabaseService {
    * Get all contacts for a user
    */
   static async getUserContacts(userId: string): Promise<Contact[]> {
-    // In a browser environment, use Supabase API
-    if (typeof window !== 'undefined') {
-      const supabase = createClient();
-      const { data, error } = await supabase
-        .from('Contact')
-        .select(`
+  if (typeof window !== 'undefined') {
+    const supabase = createClient();
+    const { data, error } = await supabase
+      .from('Contact')
+      .select(`
+        id,
+        isPinned,
+        contactUserId,
+        User:contactUserId (
           id,
-          contactUserId,
-          isPinned,
-          User!contactUserId (
-            id,
-            name,
-            status
-          )
-        `)
-        .eq('userId', userId);
-      
-      if (error || !data) {
-        console.error('Error fetching contacts:', error);
-        return [];
-      }
-      
-      return data.map(contact => ({
-        id: contact.contactUserId,
-        name: contact.User.name,
-        status: contact.User.status || 'offline',
-        isPinned: contact.isPinned,
-        isAi: false,
-        isGroup: false
-      }));
+          name,
+          status,
+          lastSeen
+        )
+      `)
+      .eq('userId', userId);
+
+    if (error || !data) {
+      console.error('Error fetching contacts:', error);
+      return [];
     }
-    
-    // In a Node.js environment, we would use Prisma directly
-    // This is a simplified implementation
-    return [];
+
+    return data.map(contact => ({
+      id: contact.contactUserId,
+      name: contact.User?.name || '',
+      status: contact.User?.status || 'offline',
+      lastSeen: contact.User?.lastSeen || null, // ✅ This line fetches from User table
+      isPinned: contact.isPinned,
+      isAi: false,
+      isGroup: false
+    }));
   }
-  
+
+  // (Optional) Handle server-side if needed
+  return [];
+}
+
   /**
    * Get messages between two users or in a group
    */
@@ -184,30 +188,23 @@ export class DatabaseService {
       const data: { 
         status: string; 
         updatedAt: string; 
-        lastLogoutAt?: string;
-        lastLoginAt?: string;
+        lastSeen?: string;
       } = { 
         status,
         updatedAt: new Date().toISOString()
       };
-      
-      // Update last login/logout time based on status
-      if (status === 'online') {
-        data.lastLoginAt = new Date().toISOString();
-      } else if (status === 'offline') {
-        data.lastLogoutAt = new Date().toISOString();
+      // Update lastSeen when user goes offline
+      if (status === 'offline') {
+        data.lastSeen = new Date().toISOString();
       }
-      
       const { error } = await supabase
         .from('User')
         .update(data)
         .eq('id', userId);
-      
       if (error) {
         console.error('Error updating user status:', error);
         return false;
       }
-      
       return true;
     }
     
@@ -217,19 +214,14 @@ export class DatabaseService {
         status,
         updatedAt: new Date()
       };
-      
-      // Update last login/logout time based on status
-      if (status === 'online') {
-        data.lastLoginAt = new Date();
-      } else if (status === 'offline') {
-        data.lastLogoutAt = new Date();
+      // Update lastSeen when user goes offline
+      if (status === 'offline') {
+        data.lastSeen = new Date();
       }
-      
       await prisma.user.update({
         where: { id: userId },
         data
       });
-      
       return true;
     } catch (error) {
       console.error('Error updating user status with Prisma:', error);
@@ -237,39 +229,8 @@ export class DatabaseService {
     }
   }
   
-  /**
-   * Get user's last logout time
-   */
-  static async getLastLogoutTime(userId: string): Promise<Date | null> {
-    // In a browser environment, use Supabase API
-    if (typeof window !== 'undefined') {
-      const supabase = createClient();
-      const { data, error } = await supabase
-        .from('User')
-        .select('lastLogoutAt')
-        .eq('id', userId)
-        .single();
-      
-      if (error || !data || !data.lastLogoutAt) {
-        console.log('No last logout time found for user:', userId);
-        return null;
-      }
-      
-      return new Date(data.lastLogoutAt);
-    }
-    
-    // In a Node.js environment, use Prisma directly
-    try {
-      // In Node.js environment we would implement this using Prisma
-      // This is a placeholder implementation since we don't have full Prisma types here
-      console.warn('getLastLogoutTime not fully implemented for Node.js environment');
-      return null;
-    } catch (error) {
-      console.error('Error fetching last logout time with Prisma:', error);
-      return null;
-    }
+  // Removed getLastLogoutTime; use lastSeen instead
   }
-}
 
 // Export a singleton instance for convenience
 export const databaseService = new DatabaseService();

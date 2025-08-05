@@ -195,21 +195,23 @@
       return 'Away';
     }
 
-    if (!contact.lastSeen) {
-      return 'Offline';
+    // Show a friendlier, mobile-optimized last seen string
+    if (contact.lastSeen) {
+      const lastSeenMoment = DateUtils.getMoment(contact.lastSeen);
+      const now = moment();
+      const diffHuman = lastSeenMoment.from(now); // e.g. '21 minutes ago'
+      // If last seen today, show only time and relative
+      if (lastSeenMoment.isSame(now, 'day')) {
+        return `Last seen today at ${lastSeenMoment.format('h:mm A')} (${diffHuman})`;
+      }
+      // If yesterday, show 'yesterday' and time
+      if (lastSeenMoment.isSame(now.clone().subtract(1, 'day'), 'day')) {
+        return `Last seen yesterday at ${lastSeenMoment.format('h:mm A')}`;
+      }
+      // Otherwise, show date and time, but keep it short
+      return `Last seen ${lastSeenMoment.format('D MMM, h:mm A')}`;
     }
-    
-    const lastSeenMoment = moment(contact.lastSeen);
-    const now = moment();
-    
-    if (lastSeenMoment.isSame(now, 'day')) {
-      return `last seen today at ${lastSeenMoment.format('h:mm A')}`;
-    }
-    if (lastSeenMoment.isSame(now.clone().subtract(1, 'day'), 'day')) {
-      return `last seen yesterday at ${lastSeenMoment.format('h:mm A')}`;
-    }
-
-    return `last seen on ${lastSeenMoment.format('MMM D')} at ${lastSeenMoment.format('h:mm A')}`;
+    return 'Offline';
   }
 
   export default DateUtils;

@@ -1,4 +1,7 @@
-import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { databaseService } from './services/databaseService';
+import { DatabaseService } from './services/databaseService';
+import { useSelectedContactWithLastSeen } from './hooks/useSelectedContactWithLastSeen';
 import Sidebar from './components/Sidebar';
 import ChatView from './components/ChatView';
 import SettingsModal from './components/SettingsModal';
@@ -147,7 +150,6 @@ const App: React.FC = () => {
   useEffect(() => {
     if (authUser) {
       console.log('Updating user profile from auth context:', authUser);
-      
       // Create a new user object with the correct type
       const updatedUser: User = {
         id: authUser.id,
@@ -156,8 +158,36 @@ const App: React.FC = () => {
         avatarUrl: authUser.avatar,
         status: (authUser as any).status || 'online'
       };
-      
       setUser(updatedUser);
+
+      // Set user offline on window/tab close, pagehide, or when tab becomes inactive
+      const goOffline = async () => {
+        try {
+          if (updatedUser.id) {
+            await DatabaseService.updateUserStatus(updatedUser.id, 'offline');
+          }
+        } catch (e) {
+          // Ignore errors
+        }
+      };
+
+      // Handle tab close/unload
+      window.addEventListener('beforeunload', goOffline);
+      window.addEventListener('pagehide', goOffline);
+
+      // Handle tab inactivity (visibilitychange)
+      const handleVisibilityChange = () => {
+        if (document.visibilityState === 'hidden') {
+          goOffline();
+        }
+      };
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+
+      return () => {
+        window.removeEventListener('beforeunload', goOffline);
+        window.removeEventListener('pagehide', goOffline);
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      };
     }
   }, [authUser, setUser]);
 
@@ -648,10 +678,7 @@ const App: React.FC = () => {
     }
   }, [user, contacts, handleMqttPayload, processQueuedMessages]);
 
-  const selectedContact = useMemo(() =>
-    contacts.find(c => c.id === selectedContactId),
-    [contacts, selectedContactId]
-  );
+  const selectedContact = useSelectedContactWithLastSeen(selectedContactId, contacts);
 
   const loadMessagesFromDatabase = useCallback(async (contactId: string, isGroup: boolean = false) => {
     try {
@@ -870,9 +897,7 @@ const App: React.FC = () => {
       status: mqttStatus === 'connected' ? 'sent' : 'queued',
       isGroup: !!selectedContact.isGroup,
       ...(attachmentForMessage && { attachment: attachmentForMessage }),
-      ...(replyInfo && { replyTo: replyInfo.replyTo }),
-      attachmenturl: attachment?.url,
-      attachmentType: attachment?.file ? 'image' : undefined,
+      ...(replyInfo && { replyTo: replyInfo.replyTo })
     };
 
     // Update local state immediately for instant UI feedback
@@ -1299,7 +1324,7 @@ const App: React.FC = () => {
         />
         <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
           <ChatView
-            contact={selectedContact}
+            contact={selectedContact || undefined}
             currentUser={user}
             contacts={contacts}
             messages={selectedContact ? messages[selectedContact.id] || [] : []}

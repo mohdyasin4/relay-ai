@@ -18,14 +18,9 @@
     name             String
     avatarUrl        String?
     status           String    @default("offline") // online, offline, away
-    lastLoginAt      DateTime?
-    lastLogoutAt     DateTime?
+    lastSeen DateTime? // nullable, updated when user goes offline
     createdAt        DateTime  @default(now())
     updatedAt        DateTime  @updatedAt
-    
-    // User preferences
-    modalPreferences Json?     // Stores preferences for modals (shown/hidden state, etc.)
-    
     // Relations
     sentMessages     Message[] @relation("SentMessages")
     contacts         Contact[] @relation("UserContacts")

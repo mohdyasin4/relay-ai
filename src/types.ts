@@ -8,8 +8,7 @@ export interface User {
   email?: string;
   avatarUrl?: string;
   status?: 'online' | 'offline' | 'away';
-  attachmenturl: string
-  attachmentType?: 'image' 
+  lastSeen?: string;
 }
 
 export interface Attachment {
