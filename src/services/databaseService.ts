@@ -18,7 +18,7 @@ export class DatabaseService {
         .from('User')
         .select('id, name, email, avatarUrl, status, lastSeen')
         .eq('id', userId)
-        .single();
+        .maybeSingle();
 
       if (error || !data) {
         console.error('Error fetching user:', error);
@@ -37,18 +37,24 @@ export class DatabaseService {
     
     // In a Node.js environment, use Prisma directly
     try {
-      const user = await prisma.user.findUnique({
+      const user: any = await prisma.user.findUnique({
         where: { id: userId }
       });
 
       if (!user) return null;
+
+      // Type guard for user.status
+      let status: 'online' | 'offline' | 'away' = 'offline';
+      if (typeof user.status === 'string' && ['online', 'offline', 'away'].includes(user.status)) {
+        status = user.status as 'online' | 'offline' | 'away';
+      }
 
       return {
         id: user.id,
         name: user.name,
         email: user.email,
         avatarUrl: user.avatarUrl,
-        status: user.status as 'online' | 'offline' | 'away',
+        status,
         lastSeen: user.lastSeen || null
       };
     } catch (error) {
@@ -80,7 +86,7 @@ export class DatabaseService {
           updatedAt: new Date().toISOString()
         })
         .select()
-        .single();
+        .maybeSingle();
       
       if (error || !data) {
         console.error('Error upserting user:', error);
@@ -99,7 +105,7 @@ export class DatabaseService {
     
     // In a Node.js environment, use Prisma directly
     try {
-      const user = await prisma.user.upsert({
+      const user: any = await prisma.user.upsert({
         where: { id: userData.id },
         update: {
           name: userData.name,
@@ -113,13 +119,18 @@ export class DatabaseService {
           status: 'online'
         }
       });
-      
+      if (!user) return null;
+      // Type guard for user.status
+      let status: 'online' | 'offline' | 'away' = 'offline';
+      if (typeof user.status === 'string' && ['online', 'offline', 'away'].includes(user.status)) {
+        status = user.status as 'online' | 'offline' | 'away';
+      }
       return {
         id: user.id,
         name: user.name,
         email: user.email,
         avatarUrl: user.avatarUrl,
-        status: user.status as 'online' | 'offline' | 'away',
+        status,
         lastSeen: user.lastSeen || null
       };
     } catch (error) {
@@ -132,41 +143,45 @@ export class DatabaseService {
    * Get all contacts for a user
    */
   static async getUserContacts(userId: string): Promise<Contact[]> {
-  if (typeof window !== 'undefined') {
-    const supabase = createClient();
-    const { data, error } = await supabase
-      .from('Contact')
-      .select(`
-        id,
-        isPinned,
-        contactUserId,
-        User:contactUserId (
+    if (typeof window !== 'undefined') {
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from('Contact')
+        .select(`
           id,
-          name,
-          status,
-          lastSeen
-        )
-      `)
-      .eq('userId', userId);
+          isPinned,
+          contactUserId,
+          User:contactUserId (
+            id,
+            name,
+            status,
+            lastSeen
+          )
+        `)
+        .eq('userId', userId);
 
-    if (error || !data) {
-      console.error('Error fetching contacts:', error);
-      return [];
+      if (error || !data) {
+        console.error('Error fetching contacts:', error);
+        return [];
+      }
+
+      return data.map(contact => {
+        // User can be null or an array (if join returns multiple)
+        const userObj = Array.isArray(contact.User) ? contact.User[0] : contact.User;
+        return {
+          id: contact.contactUserId,
+          name: userObj?.name || '',
+          status: userObj?.status || 'offline',
+          lastSeen: userObj?.lastSeen || null,
+          isPinned: contact.isPinned,
+          isAi: false,
+          isGroup: false
+        };
+      });
     }
 
-    return data.map(contact => ({
-      id: contact.contactUserId,
-      name: contact.User?.name || '',
-      status: contact.User?.status || 'offline',
-      lastSeen: contact.User?.lastSeen || null, // ✅ This line fetches from User table
-      isPinned: contact.isPinned,
-      isAi: false,
-      isGroup: false
-    }));
-  }
-
-  // (Optional) Handle server-side if needed
-  return [];
+    // (Optional) Handle server-side if needed
+    return [];
 }
 
   /**

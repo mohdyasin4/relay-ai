@@ -50,7 +50,7 @@ function createModelProxy(modelName: string) {
       // In a real app, this would make an API call
       return {};
     },
-    upsert: async () => {
+    upsert: async (p0?: { where: { id: string; }; update: { name: string; status: string; updatedAt: Date; }; create: { id: string; email: string; name: string; status: string; }; }) => {
       console.log(`[BrowserPrisma] Called ${modelName}.upsert`);
       // In a real app, this would make an API call
       return {};
