@@ -21,7 +21,9 @@ export class DatabaseService {
         .maybeSingle();
 
       if (error || !data) {
-        console.error('Error fetching user:', error);
+        // Suppress noisy error log for missing user
+        // Optionally, use console.debug or remove entirely
+        // console.debug('User not found or error:', error);
         return null;
       }
 

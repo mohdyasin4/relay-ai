@@ -21,16 +21,38 @@ export class MessageService {
    */
   static async saveMessage(message: Message): Promise<boolean> {
     const supabase = createClient();
-    
     try {
       // Check if sender is an AI persona
       const { AI_PERSONAS } = await import('../constants');
       const isAiSender = AI_PERSONAS.some(ai => ai.id === message.senderId);
 
+      // Always generate a new UUID if not provided
+      let msgId = message.id || generateUUID();
+
+      // Check for duplicate message (same sender, text, timestamp, contact/group)
+      let duplicateQuery = supabase.from('Message').select('id')
+        .eq('text', message.text)
+        .eq('timestamp', typeof message.timestamp === 'string' ? message.timestamp : (message.timestamp instanceof Date ? message.timestamp.toISOString() : new Date().toISOString()));
+      if (message.isGroup) {
+        duplicateQuery = duplicateQuery.eq('groupId', message.contactId);
+      } else {
+        duplicateQuery = duplicateQuery.eq('recipientId', message.contactId).eq('senderId', isAiSender ? null : message.senderId);
+      }
+      const { data: existing, error: dupError } = await duplicateQuery.maybeSingle();
+      if (dupError) {
+        console.error('Error checking for duplicate message:', dupError);
+        // Fail safe: allow insert
+      }
+      if (existing && existing.id) {
+        // Message already exists, do not insert again
+        console.log('Duplicate message detected, skipping insert:', existing.id);
+        return true;
+      }
+
       const { error } = await supabase
         .from('Message')
         .insert({
-          id: message.id,
+          id: msgId,
           text: message.text,
           senderId: isAiSender ? null : message.senderId, // Null for AI messages
           aiSenderId: isAiSender ? message.senderId : null, // AI persona ID
@@ -57,7 +79,7 @@ export class MessageService {
         return false;
       }
 
-      console.log(`${isAiSender ? 'AI' : 'User'} message saved to database:`, message.id);
+      console.log(`${isAiSender ? 'AI' : 'User'} message saved to database:`, msgId);
       return true;
     } catch (error) {
       console.error('Error saving message:', error);
