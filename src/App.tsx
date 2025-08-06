@@ -1296,13 +1296,24 @@ const App: React.FC = () => {
     );
   }
 
+  // Sort contacts by last message timestamp (descending)
+  const sortedContacts = [...contacts].sort((a, b) => {
+    const aMessages = messages[a.id] || [];
+    const bMessages = messages[b.id] || [];
+    const aLast = aMessages.length ? new Date(aMessages[aMessages.length - 1].timestamp).getTime() : 0;
+    const bLast = bMessages.length ? new Date(bMessages[bMessages.length - 1].timestamp).getTime() : 0;
+    // If both have no messages, keep original order
+    if (!aLast && !bLast) return 0;
+    return bLast - aLast;
+  });
+
   return (
     <>
       <div className="h-screen w-screen text-slate-800 dark:text-slate-200 flex font-sans antialiased">
         <Sidebar
           style={{ width: `${sidebarWidth}px`}}
           theme={theme}
-          contacts={contacts}
+          contacts={sortedContacts}
           messages={messages}
           unreadCounts={unreadCounts}
           selectedContactId={selectedContactId}

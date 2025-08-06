@@ -46,51 +46,37 @@ const Sidebar: React.FC<SidebarProps> = ({ contacts, messages, unreadCounts, sel
   }, []);
 
   const sortedContacts = useMemo(() => {
-    const getSortKey = (contact: Contact): number => {
-      const contactMessages = messages[contact.id] || [];
-      const lastMessage = contactMessages[contactMessages.length - 1];
-      // Use epoch time for sorting, 0 if no messages exist.
-      return lastMessage ? new Date(lastMessage.timestamp).getTime() : 0;
-    };
-
+    // Filter contacts by search term if present
     const filtered = searchTerm
       ? contacts.filter(c => c.name.toLowerCase().includes(searchTerm.toLowerCase()))
       : contacts;
 
+    // Sort contacts by most recent message timestamp (descending)
     return [...filtered].sort((a, b) => {
-      // Pinned contacts always have the highest priority.
+      const messagesA = messages[a.id] || [];
+      const messagesB = messages[b.id] || [];
+      const lastMessageA = messagesA[messagesA.length - 1];
+      const lastMessageB = messagesB[messagesB.length - 1];
+      const timeA = lastMessageA ? new Date(lastMessageA.timestamp).getTime() : 0;
+      const timeB = lastMessageB ? new Date(lastMessageB.timestamp).getTime() : 0;
+
+      // Pinned contacts always have the highest priority
       if (a.isPinned !== b.isPinned) {
         return a.isPinned ? -1 : 1;
       }
-      
+
+      // Sort by most recent message time (descending)
+      if (timeA !== timeB) {
+        return timeB - timeA;
+      }
+
+      // If timestamps are the same, prioritize higher unread count
       const unreadA = unreadCounts[a.id] || 0;
       const unreadB = unreadCounts[b.id] || 0;
-      const timeA = getSortKey(a);
-      const timeB = getSortKey(b);
-
-      // Within the same pinned status, prioritize by:
-      // 1. Unread chats first
-      // 2. Among unread chats, sort by most recent message time
-      // 3. Among read chats, sort by most recent message time
-      
-      if (unreadA > 0 && unreadB === 0) {
-        return -1; // A has unread, B doesn't - A comes first
-      }
-      
-      if (unreadB > 0 && unreadA === 0) {
-        return 1; // B has unread, A doesn't - B comes first
-      }
-      
-      // Both have the same read/unread status, sort by last message time (newest first)
-      if (timeA !== timeB) {
-        return timeB - timeA; // Descending order for most recent first
-      }
-      
-      // If timestamps are the same, prioritize higher unread count
       if (unreadA !== unreadB) {
         return unreadB - unreadA;
       }
-      
+
       // Fallback to alphabetical sorting for consistency
       return a.name.localeCompare(b.name);
     });

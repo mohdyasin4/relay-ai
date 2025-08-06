@@ -189,29 +189,29 @@ class MqttService {
             console.log(`[MQTT] Client ID: ${connectOptions.clientId}`);
             console.log(`[MQTT] Broker: ${this.brokerUrl}`);
             this.connectionStatus = 'connected';
-            
+
             // Publish user online status
-            this.publish(`user/${user.id}/status`, { 
-                status: 'online', 
-                timestamp: new Date().toISOString() 
+            this.publish(`user/${user.id}/status`, {
+                status: 'online',
+                timestamp: new Date().toISOString()
             });
-            
-            // Update user status in the database
+
+            // Update user status in the database IMMEDIATELY on connect
             DatabaseService.updateUserStatus(user.id, 'online')
                 .then(success => {
                     if (success) {
-                        console.log('[MQTT] User status updated to online in database');
+                        console.log('[MQTT] User status updated to online in database (on connect)');
                     } else {
-                        console.error('[MQTT] Failed to update user status to online in database');
+                        console.error('[MQTT] Failed to update user status to online in database (on connect)');
                     }
                 })
                 .catch(error => {
-                    console.error('[MQTT] Error updating user status in database:', error);
+                    console.error('[MQTT] Error updating user status in database (on connect):', error);
                 });
-            
+
             // Start heartbeat to keep user status updated
             this.startHeartbeat();
-            
+
             console.log('[MQTT] Restoring subscriptions...');
             this.subscriptions.forEach(topic => this._performSubscribe(topic));
             this._processPublishQueue();
@@ -223,33 +223,14 @@ class MqttService {
         
         // Handle client going offline
         this.client.on('offline', () => {
-            console.log('[MQTT] Client is offline. Will attempt to reconnect automatically.');
+            const reason = 'MQTT client is offline (network or broker issue)';
+            console.log(`[MQTT] Client is offline. Reason: ${reason} Will attempt to reconnect automatically.`);
             this.connectionStatus = 'disconnected';
-            
-            // Update user status to offline in the database
-            if (this.currentUser) {
-                console.log('[MQTT] Updating user status to offline in database due to client going offline');
-                DatabaseService.updateUserStatus(this.currentUser.id, 'offline')
-                    .then(success => {
-                        if (success) {
-                            console.log('[MQTT] User status updated to offline successfully');
-                        } else {
-                            console.error('[MQTT] Failed to update user status to offline');
-                        }
-                    })
-                    .catch(error => {
-                        console.error('[MQTT] Error updating user status to offline:', error);
-                    });
-            }
-        });
-        
-        this.client.on('close', () => {
-            if (!this.explicitDisconnect) {
-                console.warn('[MQTT] Connection closed. The client will attempt to reconnect automatically.');
-                
-                // Update user status to offline in the database when disconnected unexpectedly
-                if (this.currentUser) {
-                    console.log('[MQTT] Updating user status to offline in database');
+            // Only set offline if not already online and not reconnecting
+            if (this.currentUser && !this.explicitDisconnect) {
+                // Check if client is really offline (not just reconnecting)
+                if (!this.client?.reconnecting) {
+                    console.info(`[MQTT] Setting user status to offline in database. Reason: ${reason}`);
                     DatabaseService.updateUserStatus(this.currentUser.id, 'offline')
                         .then(success => {
                             if (success) {
@@ -261,6 +242,32 @@ class MqttService {
                         .catch(error => {
                             console.error('[MQTT] Error updating user status to offline:', error);
                         });
+                } else {
+                    console.log('[MQTT] Offline event during reconnect, not setting user offline.');
+                }
+            }
+        });
+        
+        this.client.on('close', () => {
+            if (!this.explicitDisconnect) {
+                const reason = 'MQTT connection closed unexpectedly';
+                console.warn(`[MQTT] Connection closed. Reason: ${reason} The client will attempt to reconnect automatically.`);
+                // Only set offline if not reconnecting
+                if (this.currentUser && !this.client?.reconnecting) {
+                    console.info(`[MQTT] Setting user status to offline in database. Reason: ${reason}`);
+                    DatabaseService.updateUserStatus(this.currentUser.id, 'offline')
+                        .then(success => {
+                            if (success) {
+                                console.log('[MQTT] User status updated to offline successfully');
+                            } else {
+                                console.error('[MQTT] Failed to update user status to offline');
+                            }
+                        })
+                        .catch(error => {
+                            console.error('[MQTT] Error updating user status to offline:', error);
+                        });
+                } else {
+                    console.log('[MQTT] Close event during reconnect, not setting user offline.');
                 }
             } else {
                 console.log('[MQTT] Connection closed by user.');
@@ -272,7 +279,24 @@ class MqttService {
             console.error('[MQTT] Error type:', typeof error);
             console.error('[MQTT] Error message:', error.message);
             this.connectionStatus = 'error';
-            
+
+            // Log reason and set user offline
+            const reason = `MQTT error: ${error?.message || 'unknown'}`;
+            if (this.currentUser) {
+                console.info(`[MQTT] Setting user status to offline in database. Reason: ${reason}`);
+                DatabaseService.updateUserStatus(this.currentUser.id, 'offline')
+                    .then(success => {
+                        if (success) {
+                            console.log('[MQTT] User status updated to offline successfully');
+                        } else {
+                            console.error('[MQTT] Failed to update user status to offline');
+                        }
+                    })
+                    .catch(err => {
+                        console.error('[MQTT] Error updating user status to offline:', err);
+                    });
+            }
+
             // Additional error details for debugging
             const mqttError = error as { code?: string; errno?: number; syscall?: string };
             if (mqttError.code) {
@@ -284,7 +308,7 @@ class MqttService {
             if (mqttError.syscall) {
                 console.error(`[MQTT] System call: ${mqttError.syscall}`);
             }
-            
+
             // On critical errors, attempt to reconnect manually after a delay
             if (mqttError.code === 'ECONNREFUSED' || mqttError.code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE') {
                 console.log('[MQTT] Critical connection error. Will attempt manual reconnection in 10 seconds.');
