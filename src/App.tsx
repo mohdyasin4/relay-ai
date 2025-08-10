@@ -1,16 +1,17 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { databaseService } from './services/databaseService';
-import { DatabaseService } from './services/databaseService';
+// import { DatabaseService } from './services/databaseService';
 import { useSelectedContactWithLastSeen } from './hooks/useSelectedContactWithLastSeen';
 import Sidebar from './components/Sidebar';
 import ChatView from './components/ChatView';
 import SettingsModal from './components/SettingsModal';
-import NewGroupModal from './components/NewGroupModal';
+// import NewGroupModal from './components/NewGroupModal';
+import NewChatDialog from './components/NewChatDialog';
 import EditGroupModal from './components/EditGroupModal';
 import Lightbox from './components/Lightbox';
 import ForwardMessageModal from './components/ForwardMessageModal';
 import InviteUserModal from './components/InviteUserModal';
 import FriendRequestsModal from './components/FriendRequestsModal';
+import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from './components/ui/resizable';
 import { generateUUID } from './utils/uuidUtils';
 import { sendMessageToBot } from './services/geminiService';
 import { FriendsService } from './services/friendsService';
@@ -21,6 +22,7 @@ import { useAuth } from './contexts/AuthContext';
 import type { Contact, Message, MessagesState, User, Attachment, Theme, MqttPayload, Invitation, ReadReceipt, DeliveryReceipt, TypingIndicatorPayload, ReactionPayload } from './types';
 import { AI_PERSONAS } from './constants';
 import { mqttService } from './services/mqttService';
+import { cn } from './lib/utils';
 
 const App: React.FC = () => {
   console.log('App component rendering');
@@ -28,8 +30,11 @@ const App: React.FC = () => {
   console.log('Auth user from context:', authUser);
   const [user, setUser] = useState<User | null>(authUser); // Initialize with auth user
   const [theme, setTheme] = useLocalStorage<Theme>('theme', 'dark');
-  const [sidebarWidth, setSidebarWidth] = useLocalStorage<number>('sidebarWidth', 320);
-  const [mqttStatus, setMqttStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
+  // Persistent sidebar width in px
+  // Use default width unless user has resized
+  const DEFAULT_SIDEBAR_WIDTH = 320;
+  const [sidebarWidth, setSidebarWidth] = useLocalStorage<number>('sidebarWidth', DEFAULT_SIDEBAR_WIDTH);
+  // Avoid local MQTT status state to prevent re-renders; use mqttService.isConnected()
 
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
@@ -41,9 +46,12 @@ const App: React.FC = () => {
   const [firstUnreadMessageId, setFirstUnreadMessageId] = useState<string | null>(null);
 
   const [isSettingsOpen, setSettingsOpen] = useState(false);
-  const [isNewGroupOpen, setNewGroupOpen] = useState(false);
+  const [, setNewGroupOpen] = useState(false);
+  const [isNewChatOpen, setNewChatOpen] = useState(false);
   const [isInviteModalOpen, setInviteModalOpen] = useState(false);
   const [isFriendRequestsOpen, setFriendRequestsOpen] = useState(false);
+  const [pendingFriendRequests, setPendingFriendRequests] = useState<number>(0);
+
   const [editingGroup, setEditingGroup] = useState<Contact | null>(null);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [forwardingMessage, setForwardingMessage] = useState<Message | null>(null);
@@ -160,65 +168,28 @@ const App: React.FC = () => {
       };
       setUser(updatedUser);
 
-      // Set user offline on window/tab close, pagehide, or when tab becomes inactive
-      const goOffline = async () => {
-        try {
-          if (updatedUser.id) {
-            await DatabaseService.updateUserStatus(updatedUser.id, 'offline');
-          }
-        } catch (e) {
-          // Ignore errors
-        }
+      // Ensure MQTT disconnect on tab close/unload for reliable offline status
+      const handleUnload = () => {
+        try { mqttService.disconnect(); } catch {}
       };
-
-      // Handle tab close/unload
-      window.addEventListener('beforeunload', goOffline);
-      window.addEventListener('pagehide', goOffline);
+      window.addEventListener('beforeunload', handleUnload);
+      window.addEventListener('unload', handleUnload);
 
       // Handle tab inactivity (visibilitychange)
       const handleVisibilityChange = () => {
-        if (document.visibilityState === 'hidden') {
-          goOffline();
-        }
+        // Do not disconnect on simple tab hide to avoid churn and extra API calls
       };
       document.addEventListener('visibilitychange', handleVisibilityChange);
 
       return () => {
-        window.removeEventListener('beforeunload', goOffline);
-        window.removeEventListener('pagehide', goOffline);
+        window.removeEventListener('beforeunload', handleUnload);
+        window.removeEventListener('unload', handleUnload);
         document.removeEventListener('visibilitychange', handleVisibilityChange);
       };
     }
   }, [authUser, setUser]);
 
-  const loadAllContactMessages = useCallback(async (contactsList: Contact[]) => {
-    console.log('Loading messages for all contacts for proper sorting');
-    const messagePromises = contactsList.map(async (contact) => {
-      try {
-        // Only load messages for real contacts and groups, not AI assistants
-        if (!contact.isAi) {
-          const dbMessages = await MessageService.getMessages(contact.id, contact.isGroup);
-          return { contactId: contact.id, messages: dbMessages };
-        }
-        return null;
-      } catch (error) {
-        console.error(`Failed to load messages for contact ${contact.id}:`, error);
-        return null;
-      }
-    });
-
-    const results = await Promise.all(messagePromises);
-    const messagesMap: MessagesState = {};
-    
-    results.forEach(result => {
-      if (result) {
-        messagesMap[result.contactId] = result.messages;
-      }
-    });
-
-    setMessages(messagesMap);
-    console.log('Loaded messages for all contacts:', messagesMap);
-  }, []);
+  // Removed eager load of all messages for sorting to cut down on API calls.
 
   const loadContactsFromDatabase = useCallback(async () => {
     if (!user) return;
@@ -232,7 +203,7 @@ const App: React.FC = () => {
       // Subscribe to MQTT topics for new contacts
       allContacts.forEach(contact => {
         if (!contact.isAi) {
-          const topic = contact.isGroup ? `chat/${contact.id}` : `chat/${[user.id, contact.id].sort().join('-')}`;
+          const topic = contact.isGroup ? `chat/${contact.id}` : (contact.topicId || `chat/${[user.id, contact.id].sort().join('-')}`);
           mqttService.subscribe(topic);
           console.log(`Subscribed to topic for contact ${contact.name}: ${topic}`);
         }
@@ -240,19 +211,43 @@ const App: React.FC = () => {
       
       setContacts(allContacts);
       
-      // Load recent messages for all contacts to enable proper sorting
-      await loadAllContactMessages(allContacts);
+      // Do not prefetch all messages; messages load lazily when opening a chat
     } catch (error) {
       console.error('Failed to load contacts from database:', error);
       // Fallback to empty contacts on error
       setContacts([]);
     }
-  }, [user, loadAllContactMessages]);
+  }, [user]);
 
   // Load contacts from database when user changes
   useEffect(() => {
     if (user) {
       loadContactsFromDatabase();
+      // Load initial friend requests count
+      (async () => {
+        try {
+          const result = await FriendsService.getFriendRequests(user.id);
+          setPendingFriendRequests((result?.received?.length || 0));
+        } catch {}
+      })();
+      
+      // Realtime subscription for friend requests
+      mqttService.subscribe(`user/${user.id}`);
+      const listener = (payload: any, topic: string) => {
+        if (topic === `user/${user.id}` && payload?.type === 'friend_request_accepted') {
+          // Reduce pending when a sent request gets accepted
+          setPendingFriendRequests(prev => Math.max(0, prev - 1));
+        }
+        if (topic === `user/${user.id}` && payload?.type === 'friend_request') {
+          // Increase pending on incoming request
+          setPendingFriendRequests(prev => prev + 1);
+        }
+      };
+      mqttService.addListener(listener);
+      return () => {
+        try { mqttService.unsubscribe(`user/${user.id}`); } catch {}
+        try { mqttService.removeListener(listener); } catch {}
+      };
     }
   }, [user, loadContactsFromDatabase]);
 
@@ -578,105 +573,117 @@ const App: React.FC = () => {
     }
   }, [contacts, setContacts, setMessages, user, setTypingIndicators, selectedContactId, setUnreadCounts]);
   
-  // MQTT Connection and message handling
-  useEffect(() => {
-    if (user) {
-        mqttService.connect(user);
-        mqttService.addListener(handleMqttPayload);
-        setMqttStatus(mqttService.getConnectionStatus());
+  // Load unread messages received while user was offline or during reconnect (shared)
+  const loadUnreadMessages = useCallback(async () => {
+    if (!user) return;
+    try {
+      console.log('Checking for unread messages received while offline...');
+      const unreadMessages = await MessageService.getUnreadMessages(user.id, user.lastSeen);
 
-        // Subscribe to personal "inbox" topic for invitations
-        const personalTopic = `user/${user.id}`;
-        mqttService.subscribe(personalTopic);
-        console.log(`Subscribed to personal topic: ${personalTopic}`);
+      const newUnread: Record<string, number> = {};
+      Object.entries(unreadMessages).forEach(([contactId, msgs]) => {
+        if (msgs.length > 0) {
+          newUnread[contactId] = msgs.length;
+          setMessages(prev => {
+            const existing = prev[contactId] || [];
+            const existingIds = new Set(existing.map(m => m.id));
+            const unique = msgs.filter(m => !existingIds.has(m.id));
+            if (unique.length === 0) return prev;
+            const combined = [...existing, ...unique].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+            return { ...prev, [contactId]: combined };
+          });
+        }
+      });
 
-        // Subscribe to topics for all existing contacts
-        contacts.forEach(contact => {
-            if (!contact.isAi) {
-                const topic = contact.isGroup ? `chat/${contact.id}` : `chat/${[user.id, contact.id].sort().join('-')}`;
-                mqttService.subscribe(topic);
-            }
-        });
-
-        // Load unread messages received while user was offline
-        const loadUnreadMessages = async () => {
-            try {
-                console.log('Checking for unread messages received while offline...');
-                const unreadMessages = await MessageService.getUnreadMessages(user.id);
-                
-                // Update unread counts in state
-                const newUnreadCounts: Record<string, number> = {};
-                Object.entries(unreadMessages).forEach(([contactId, messages]) => {
-                    if (messages.length > 0) {
-                        newUnreadCounts[contactId] = messages.length;
-                        
-                        // Update messages state to include these unread messages
-                        setMessages(prev => {
-                            const existingMessages = prev[contactId] || [];
-                            
-                            // Avoid duplicates by checking IDs
-                            const existingIds = new Set(existingMessages.map(m => m.id));
-                            const newMessages = messages.filter(m => !existingIds.has(m.id));
-                            
-                            if (newMessages.length === 0) return prev;
-                            
-                            // Sort by timestamp after merging
-                            const combined = [...existingMessages, ...newMessages].sort((a, b) => {
-                                const timeA = new Date(a.timestamp).getTime();
-                                const timeB = new Date(b.timestamp).getTime();
-                                return timeA - timeB;
-                            });
-                            
-                            return {...prev, [contactId]: combined};
-                        });
-                    }
-                });
-                
-                // Update unread counts
-                if (Object.keys(newUnreadCounts).length > 0) {
-                    console.log('Found unread messages:', newUnreadCounts);
-                    setUnreadCounts(prev => ({...prev, ...newUnreadCounts}));
-                } else {
-                    console.log('No unread messages found');
-                }
-            } catch (error) {
-                console.error('Error loading unread messages:', error);
-            }
-        };
-        
-        loadUnreadMessages();
-        
-        // Periodically check MQTT connection status
-        const statusInterval = setInterval(() => {
-            const prevStatus = mqttStatus;
-            const status = mqttService.getConnectionStatus();
-            setMqttStatus(status);
-            
-            // If we just reconnected, process any queued messages
-            if (prevStatus !== 'connected' && status === 'connected') {
-                console.log('[App] MQTT reconnected, processing queued messages...');
-                processQueuedMessages();
-                
-                // Also reload unread messages when reconnecting
-                loadUnreadMessages();
-            }
-            
-            // If disconnected or error, try to reconnect
-            if (status === 'disconnected' || status === 'error') {
-                console.log('[App] MQTT appears to be disconnected, attempting to reconnect...');
-                mqttService.checkConnection().then(connected => {
-                    console.log(`[App] MQTT reconnection attempt result: ${connected ? 'connected' : 'failed'}`);
-                });
-            }
-        }, 30000); // Check every 30 seconds
-        
-        return () => {
-            clearInterval(statusInterval);
-            mqttService.removeListener(handleMqttPayload);
-            mqttService.disconnect();
-        };
+      if (Object.keys(newUnread).length > 0) {
+        setUnreadCounts(prev => ({ ...prev, ...newUnread }));
+      }
+    } catch (error) {
+      console.error('Error loading unread messages:', error);
     }
-  }, [user, contacts, handleMqttPayload, processQueuedMessages]);
+  }, [user, setMessages, setUnreadCounts]);
+
+  // Prime conversation list with latest messages for each contact on initial contacts load
+  useEffect(() => {
+    (async () => {
+      if (!user || contacts.length === 0) return;
+      try {
+        const latest = await MessageService.getLatestMessagesForContacts(user.id, contacts, 1);
+        const contactIds = Object.keys(latest);
+        if (contactIds.length === 0) return;
+        setMessages(prev => {
+          const next = { ...prev };
+          for (const cid of contactIds) {
+            const existing = next[cid] || [];
+            const incoming = latest[cid] || [];
+            const existingIds = new Set(existing.map(m => m.id));
+            const unique = incoming.filter(m => !existingIds.has(m.id));
+            if (unique.length > 0) {
+              next[cid] = [...existing, ...unique].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+            }
+          }
+          return next;
+        });
+      } catch (e) {
+        console.error('Failed to prime latest messages:', e);
+      }
+    })();
+  }, [user?.id, contacts.length]);
+
+  // Connect once per user
+  useEffect(() => {
+    if (!user) return;
+    mqttService.connect(user);
+  }, [user?.id]);
+
+  // Attach payload listener
+  useEffect(() => {
+    if (!user) return;
+    mqttService.addListener(handleMqttPayload);
+    return () => { mqttService.removeListener(handleMqttPayload); };
+  }, [user?.id, handleMqttPayload]);
+
+  // Register reconnect helpers for mqttService (via window bridge already used in service)
+  useEffect(() => {
+    if (!user) return;
+    (window as any).processQueuedMessages = processQueuedMessages;
+    (window as any).loadUnreadMessages = loadUnreadMessages;
+    // run once on mount
+    loadUnreadMessages();
+    return () => {
+      try { delete (window as any).processQueuedMessages; } catch {}
+      try { delete (window as any).loadUnreadMessages; } catch {}
+    };
+  }, [user?.id, processQueuedMessages, loadUnreadMessages]);
+
+  // Manage subscriptions without reconnect churn
+  const prevTopicsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!user) return;
+    const topics = new Set<string>();
+    // Personal inbox
+    topics.add(`user/${user.id}`);
+    // Contacts
+    contacts.forEach(contact => {
+      const topic = contact.isGroup ? `chat/${contact.id}` : (contact.topicId || `chat/${[user.id, contact.id].sort().join('-')}`);
+      topics.add(topic);
+    });
+
+    // Subscribe to new topics
+    topics.forEach(t => {
+      if (!prevTopicsRef.current.has(t)) {
+        mqttService.subscribe(t);
+      }
+    });
+    // Unsubscribe removed topics
+    prevTopicsRef.current.forEach(t => {
+      if (!topics.has(t)) {
+        try { mqttService.unsubscribe(t); } catch {}
+      }
+    });
+
+    prevTopicsRef.current = topics;
+  }, [user?.id, contacts]);
 
   const selectedContact = useSelectedContactWithLastSeen(selectedContactId, contacts);
 
@@ -700,7 +707,7 @@ const App: React.FC = () => {
     
     // Load messages from database for this contact
     const contact = contacts.find(c => c.id === contactId);
-    if (contact && (contact.isGroup || !contact.isAi)) {
+    if (contact) {
       await loadMessagesFromDatabase(contactId, contact.isGroup);
     }
     
@@ -894,7 +901,7 @@ const App: React.FC = () => {
       senderId: user.id,
       senderName: user.name,
       timestamp: new Date(),
-      status: mqttStatus === 'connected' ? 'sent' : 'queued',
+      status: mqttService.isConnected() ? 'sent' : 'queued',
       isGroup: !!selectedContact.isGroup,
       ...(attachmentForMessage && { attachment: attachmentForMessage }),
       ...(replyInfo && { replyTo: replyInfo.replyTo })
@@ -922,7 +929,7 @@ const App: React.FC = () => {
       console.log('Message saved to database:', userMessage.id);
       
       // Update status in database after successful save
-      const finalStatus = mqttStatus === 'connected' ? 'sent' : 'queued';
+      const finalStatus = mqttService.isConnected() ? 'sent' : 'queued';
       await MessageService.updateMessageStatus(userMessage.id, finalStatus);
     } catch (error) {
       console.error('Failed to save message to database:', error);
@@ -933,7 +940,7 @@ const App: React.FC = () => {
     } else {
         const topic = selectedContact.isGroup 
             ? `chat/${selectedContact.id}` 
-            : `chat/${[user.id, selectedContact.id].sort().join('-')}`;
+            : (selectedContact.topicId || `chat/${[user.id, selectedContact.id].sort().join('-')}`);
         
         mqttService.publish(topic, userMessage);
         
@@ -1047,7 +1054,7 @@ const App: React.FC = () => {
 
   const handleFriendRequestAccepted = useCallback(async (friendId: string) => {
     console.log('Friend request accepted for user:', friendId);
-    console.log('Reloading contacts from database...');
+    setPendingFriendRequests(prev => (prev > 0 ? prev - 1 : 0));
     // Reload contacts from database to include the new friend
     await loadContactsFromDatabase();
     console.log('Contacts reloaded successfully');
@@ -1109,7 +1116,7 @@ const App: React.FC = () => {
     if (!selectedContact.isAi) {
       const topic = selectedContact.isGroup 
           ? `chat/${selectedContact.id}` 
-          : `chat/${[user.id, selectedContact.id].sort().join('-')}`;
+          : (selectedContact.topicId || `chat/${[user.id, selectedContact.id].sort().join('-')}`);
       
       const payload: ReactionPayload = {
           type: 'reaction',
@@ -1161,6 +1168,10 @@ const App: React.FC = () => {
       status: 'sent',
       attachment,
       isForwarded: true,
+      forwardedFromMessageId: forwardingMessage.id,
+      forwardedFromContactId: forwardingMessage.contactId,
+      forwardedById: user.id,
+      forwardedToContactId: targetContactId,
       isGroup: targetContact.isGroup,
     };
     
@@ -1258,29 +1269,7 @@ const App: React.FC = () => {
     }
   }, [logout]);
 
-  const handleMouseDown = useCallback((_e: React.MouseEvent) => {
-    isResizing.current = true;
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
-
-    const handleMouseMove = (event: MouseEvent) => {
-        if (isResizing.current) {
-            const newWidth = Math.max(280, Math.min(500, event.clientX));
-            setSidebarWidth(newWidth);
-        }
-    };
-
-    const handleMouseUp = () => {
-        isResizing.current = false;
-        document.body.style.cursor = 'default';
-        document.body.style.userSelect = 'auto';
-        window.removeEventListener('mousemove', handleMouseMove);
-        window.removeEventListener('mouseup', handleMouseUp);
-    };
-
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
-  }, [setSidebarWidth]);
+  // Remove manual mouse event resizing logic, use ResizablePanel's onResize
 
   // If no user, show a loading state instead of rendering nothing
   if (!user) {
@@ -1308,10 +1297,33 @@ const App: React.FC = () => {
   });
 
   return (
-    <>
-      <div className="h-screen w-screen text-slate-800 dark:text-slate-200 flex font-sans antialiased">
+   
+<>
+  <div className="h-screen w-screen flex flex-col font-sans antialiased text-slate-800 dark:text-slate-200 overflow-hidden">    <ResizablePanelGroup
+      direction="horizontal"
+      className="flex-1 h-full md:min-w-[450px] overflow-hidden"
+    >
+      {/* Sidebar Panel */}
+      <ResizablePanel
+        defaultSize={Math.round(((sidebarWidth ?? DEFAULT_SIDEBAR_WIDTH) / window.innerWidth) * 100)}
+        minSize={16}
+        maxSize={25}
+        onResize={(sizes: number | number[]) => {
+          // Only update localStorage if user actually resizes
+          let percent: number;
+          if (Array.isArray(sizes)) {
+            percent = sizes[0];
+          } else {
+            percent = sizes;
+          }
+          const newWidth = Math.round((percent / 100) * window.innerWidth);
+          if (!isNaN(newWidth) && newWidth > 0 && newWidth !== sidebarWidth) {
+            setSidebarWidth(newWidth);
+          }
+        }}
+        className="h-full overflow-hidden"
+      >
         <Sidebar
-          style={{ width: `${sidebarWidth}px`}}
           theme={theme}
           contacts={sortedContacts}
           messages={messages}
@@ -1319,28 +1331,45 @@ const App: React.FC = () => {
           selectedContactId={selectedContactId}
           onSelectContact={handleSelectContact}
           user={user}
-          onNewGroup={() => setNewGroupOpen(true)}
+          onNewGroup={() => setNewChatOpen(true)}
           onSettings={() => setSettingsOpen(true)}
           onLogout={handleLogout}
           onTogglePin={handleTogglePinContact}
           onInviteUser={() => setInviteModalOpen(true)}
           onFriendRequests={() => setFriendRequestsOpen(true)}
           typingIndicators={typingIndicators}
+          pendingFriendRequestsCount={pendingFriendRequests}
+          style={{ width: `${sidebarWidth}px`, minWidth: `${sidebarWidth}px`, maxWidth: `${sidebarWidth}px` }}
         />
-        <div
-            onMouseDown={handleMouseDown}
-            className="w-1.5 cursor-col-resize bg-slate-200 dark:bg-slate-800 hover:bg-indigo-300 dark:hover:bg-indigo-700 transition-colors duration-200"
-            role="separator"
-            aria-label="Resize sidebar"
-        />
-        <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
+      </ResizablePanel>
+{/* Stylized Resizable Handle */}
+<div className="relative group h-full">
+  <ResizableHandle
+    withHandle
+    className={cn(
+      "opacity-0 group-hover:opacity-100 transition-opacity ease-in-out delay-200", // smooth delayed fade
+      "absolute top-0 bottom-0 left-1/2 -translate-x-1/2 z-10",
+      // Track style
+      "bg-transparent group-hover:bg-border dark:group-hover:bg-foreground/25",
+      // Hit area for easier grabbing
+      "before:absolute before:inset-y-0 before:-left-2 before:w-5 before:cursor-col-resize"
+    )}
+  />
+</div>
+
+
+      {/* Chat View Panel */}
+      <ResizablePanel defaultSize={75} className="h-full overflow-hidden">
+        <main className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
           <ChatView
             contact={selectedContact || undefined}
             currentUser={user}
             contacts={contacts}
             messages={selectedContact ? messages[selectedContact.id] || [] : []}
             isLoading={isLoading}
-            typingIndicators={selectedContact ? typingIndicators[selectedContact.id] || {} : {}}
+            typingIndicators={
+              selectedContact ? typingIndicators[selectedContact.id] || {} : {}
+            }
             onSendMessage={handleSendMessage}
             onImageClick={setLightboxImage}
             onEditGroup={setEditingGroup}
@@ -1351,58 +1380,64 @@ const App: React.FC = () => {
             onAddAiContact={handleAddAiContact}
             aiPersonas={AI_PERSONAS}
             firstUnreadMessageId={firstUnreadMessageId}
+            className="flex flex-col h-full min-h-0"
           />
         </main>
-      </div>
-      <SettingsModal
-        isOpen={isSettingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        user={user}
-        onUserUpdate={setUser}
-        theme={theme}
-        onThemeChange={setTheme}
-        aiPersonas={AI_PERSONAS}
-        contacts={contacts}
-        onToggleAiContact={handleToggleAiContact}
-      />
-      <NewGroupModal
-        isOpen={isNewGroupOpen}
-        onClose={() => setNewGroupOpen(false)}
-        contacts={contacts.filter(c => !c.isGroup && !c.isAi)}
-        aiPersonas={AI_PERSONAS}
-        onCreateGroup={handleCreateGroup}
-      />
-      <EditGroupModal
-        isOpen={!!editingGroup}
-        onClose={() => setEditingGroup(null)}
-        group={editingGroup}
-        contacts={contacts.filter(c => !c.isGroup && !c.isAi)}
-        aiPersonas={AI_PERSONAS}
-        onUpdateGroup={handleUpdateGroup}
-      />
-       <InviteUserModal
-        isOpen={isInviteModalOpen}
-        onClose={() => setInviteModalOpen(false)}
-        currentUser={user!}
-      />
-      <FriendRequestsModal
-        isOpen={isFriendRequestsOpen}
-        onClose={() => setFriendRequestsOpen(false)}
-        currentUser={user!}
-        onRequestAccepted={handleFriendRequestAccepted}
-      />
-      <ForwardMessageModal
-        isOpen={!!forwardingMessage}
-        onClose={() => setForwardingMessage(null)}
-        contacts={contacts}
-        onForward={handleForwardMessage}
-        currentUser={user}
-        message={forwardingMessage || undefined}
-      />
-      {lightboxImage && (
-        <Lightbox src={lightboxImage} onClose={() => setLightboxImage(null)} />
-      )}
-    </>
+      </ResizablePanel>
+    </ResizablePanelGroup>
+  </div>
+
+  {/* Modals */}
+  <SettingsModal
+    isOpen={isSettingsOpen}
+    onClose={() => setSettingsOpen(false)}
+    user={user}
+    onUserUpdate={setUser}
+    theme={theme}
+    onThemeChange={setTheme}
+    aiPersonas={AI_PERSONAS}
+    contacts={contacts}
+    onToggleAiContact={handleToggleAiContact}
+  />
+  <NewChatDialog
+    isOpen={isNewChatOpen}
+    onClose={() => setNewChatOpen(false)}
+    currentUser={user!}
+    contacts={contacts}
+    aiPersonas={AI_PERSONAS}
+    onCreateGroup={handleCreateGroup}
+  />
+  <EditGroupModal
+    isOpen={!!editingGroup}
+    onClose={() => setEditingGroup(null)}
+    group={editingGroup}
+    contacts={contacts.filter((c) => !c.isGroup && !c.isAi)}
+    aiPersonas={AI_PERSONAS}
+    onUpdateGroup={handleUpdateGroup}
+  />
+  <InviteUserModal
+    isOpen={isInviteModalOpen}
+    onClose={() => setInviteModalOpen(false)}
+    currentUser={user!}
+  />
+  <FriendRequestsModal
+    isOpen={isFriendRequestsOpen}
+    onClose={() => setFriendRequestsOpen(false)}
+    currentUser={user!}
+    onRequestAccepted={handleFriendRequestAccepted}
+  />
+  <ForwardMessageModal
+    isOpen={!!forwardingMessage}
+    onClose={() => setForwardingMessage(null)}
+    contacts={contacts}
+    onForward={handleForwardMessage}
+    currentUser={user}
+    message={forwardingMessage || undefined}
+  />
+  {lightboxImage && (
+    <Lightbox src={lightboxImage} onClose={() => setLightboxImage(null)} />
+  )}
+</>
   );
 };
 

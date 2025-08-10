@@ -38,6 +38,7 @@ export interface Contact {
   name: string;
   systemInstruction?: string; // Optional, for AI contacts
   isGroup?: boolean;
+  avatarUrl?: string; // Optional, for user-defined avatars  
   isAi?: boolean;
   memberIds?: string[];
   creatorId?: string; // ID of the user who created the group

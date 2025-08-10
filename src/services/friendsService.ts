@@ -91,7 +91,10 @@ export class FriendsService {
         return false;
       }
 
-      // Add both users to each other's contact list
+      // Create a shared topic for both sides
+      const topicId = `chat/${[userId, friendId].sort().join('-')}`;
+
+      // Add both users to each other's contact list with explicit IDs and shared topicId
       const { error: contactError } = await supabase
         .from('Contact')
         .insert([
@@ -99,6 +102,7 @@ export class FriendsService {
             id: generateUUID(),
             userId: userId, 
             contactUserId: friendId,
+            topicId,
             createdAt: now,
             updatedAt: now
           },
@@ -106,6 +110,7 @@ export class FriendsService {
             id: generateUUID(),
             userId: friendId, 
             contactUserId: userId,
+            topicId,
             createdAt: now,
             updatedAt: now
           }
@@ -167,7 +172,7 @@ export class FriendsService {
       // Get regular user contacts (fetch contact records first)
       const { data: contactRecords, error: contactError } = await supabase
         .from('Contact')
-        .select('id, contactUserId, isPinned, isAi, aiPersonaId')
+        .select('id, contactUserId, isPinned, isAi, aiPersonaId, topicId')
         .eq('userId', userId);
 
       if (contactError) {
@@ -226,7 +231,8 @@ export class FriendsService {
               avatarUrl: user.avatarUrl,
               isAi: false,
               status: user.status || 'offline',
-              isPinned: contactRecord.isPinned
+              isPinned: contactRecord.isPinned,
+              topicId: contactRecord.topicId || `chat/${[userId, user.id].sort().join('-')}`,
             });
           }
         });
@@ -241,7 +247,8 @@ export class FriendsService {
           if (aiPersona) {
             contacts.push({
               ...aiPersona,
-              isPinned: contact.isPinned
+              isPinned: contact.isPinned,
+              topicId: contact.topicId || `chat/${[userId, aiPersona.id].sort().join('-')}`,
             });
           }
         });
@@ -373,20 +380,38 @@ export class FriendsService {
     try {
       const now = new Date().toISOString();
       
-      // Use upsert to handle duplicates gracefully
-      const { error } = await supabase
+      // Ensure an explicit id is provided for NOT NULL id columns and set shared topic
+      const newId = generateUUID();
+      const topicId = `chat/${[userId, aiPersonaId].sort().join('-')}`;
+
+      // Try insert first; if conflict, update
+      const { error: insertError } = await supabase
         .from('Contact')
-        .upsert({
+        .insert({
+          id: newId,
           userId,
           isAi: true,
           aiPersonaId,
+          topicId,
+          createdAt: now,
           updatedAt: now
-        }, {
-          onConflict: 'userId,aiPersonaId'
         });
 
-      if (error) {
-        console.error('Error adding AI contact:', error);
+      if (insertError && insertError.code === '23505') {
+        // Unique violation -> update existing row
+        const { error: updateError } = await supabase
+          .from('Contact')
+          .update({ topicId, updatedAt: now })
+          .eq('userId', userId)
+          .eq('aiPersonaId', aiPersonaId)
+          .eq('isAi', true);
+
+        if (updateError) {
+          console.error('Error updating existing AI contact:', updateError);
+          return false;
+        }
+      } else if (insertError) {
+        console.error('Error adding AI contact:', insertError);
         return false;
       }
 

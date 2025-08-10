@@ -115,7 +115,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
               return (
                 <div key={persona.id} className="flex items-center justify-between p-2 rounded-lg hover:bg-slate-200/50 dark:hover:bg-slate-800/50">
                   <div className="flex items-center gap-3">
-                    <GeneratedAvatar name={persona.name} allContacts={contacts} currentUser={user} />
+                    <GeneratedAvatar aiPersonas={aiPersonas} name={persona.name} allContacts={contacts} currentUser={user} />
                     <span className="font-semibold text-slate-800 dark:text-slate-200">{persona.name}</span>
                   </div>
                   <button

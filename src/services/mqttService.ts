@@ -1,6 +1,6 @@
 import mqtt from 'mqtt';
 import type { IClientOptions, MqttClient } from 'mqtt';
-import { generateUUID, generateShortUUID } from '@/utils/uuidUtils';
+import { generateShortUUID } from '@/utils/uuidUtils';
 import type { User, MqttPayload } from '../types';
 import { DatabaseService } from './databaseService';
 
@@ -16,6 +16,9 @@ class MqttService {
     private reconnectTimer: NodeJS.Timeout | null = null;
     private heartbeatTimer: NodeJS.Timeout | null = null;
     private connectionStatus: 'disconnected' | 'connecting' | 'connected' | 'error' = 'disconnected';
+    private lastPresenceStatus: 'online' | 'offline' | null = null;
+    private lastPresenceUpdateAt: number = 0;
+    private readonly presenceUpdateThrottleMs: number = 5 * 60 * 1000; // 5 minutes
 
     // Use environment variable or fallback to default broker URL
     private brokerUrl = import.meta.env.VITE_MQTT_BROKER_URL || 'wss://test.buildtrack.in/mqtt';
@@ -120,6 +123,26 @@ class MqttService {
         });
     }
 
+    public unsubscribe(topic: string) {
+        // Remove from our desired subscription set
+        if (this.subscriptions.has(topic)) {
+            this.subscriptions.delete(topic);
+        }
+
+        // If connected, unsubscribe at the broker too
+        if (this.client && this.client.connected) {
+            this.client.unsubscribe(topic, (err) => {
+                if (err) {
+                    console.error(`[MQTT] Failed to unsubscribe from ${topic}:`, err.message);
+                } else {
+                    console.log(`[MQTT] Unsubscribed from ${topic}`);
+                }
+            });
+        } else {
+            console.log(`[MQTT] Queued unsubscription for topic: ${topic} (will take effect on next connect)`);
+        }
+    }
+
     private _processPublishQueue() {
         if (!this.client || !this.client.connected) return;
 
@@ -196,18 +219,8 @@ class MqttService {
                 timestamp: new Date().toISOString()
             });
 
-            // Update user status in the database IMMEDIATELY on connect
-            DatabaseService.updateUserStatus(user.id, 'online')
-                .then(success => {
-                    if (success) {
-                        console.log('[MQTT] User status updated to online in database (on connect)');
-                    } else {
-                        console.error('[MQTT] Failed to update user status to online in database (on connect)');
-                    }
-                })
-                .catch(error => {
-                    console.error('[MQTT] Error updating user status in database (on connect):', error);
-                });
+            // Update user status in the database on connect if changed or throttled interval passed
+            this.updatePresenceInDatabase('online');
 
             // Start heartbeat to keep user status updated
             this.startHeartbeat();
@@ -219,6 +232,24 @@ class MqttService {
 
         this.client.on('reconnect', () => {
             console.log('[MQTT] Reconnecting...');
+            // Custom logic: process queued messages and load unread messages
+            // You may need to inject dependencies or use listeners/callbacks for these
+            if (typeof window !== 'undefined' && (window as any).processQueuedMessages) {
+                try {
+                    (window as any).processQueuedMessages();
+                    console.log('[MQTT] Queued messages processed on reconnect.');
+                } catch (err) {
+                    console.error('[MQTT] Error processing queued messages on reconnect:', err);
+                }
+            }
+            if (typeof window !== 'undefined' && (window as any).loadUnreadMessages) {
+                try {
+                    (window as any).loadUnreadMessages();
+                    console.log('[MQTT] Unread messages loaded on reconnect.');
+                } catch (err) {
+                    console.error('[MQTT] Error loading unread messages on reconnect:', err);
+                }
+            }
         });
         
         // Handle client going offline
@@ -231,17 +262,7 @@ class MqttService {
                 // Check if client is really offline (not just reconnecting)
                 if (!this.client?.reconnecting) {
                     console.info(`[MQTT] Setting user status to offline in database. Reason: ${reason}`);
-                    DatabaseService.updateUserStatus(this.currentUser.id, 'offline')
-                        .then(success => {
-                            if (success) {
-                                console.log('[MQTT] User status updated to offline successfully');
-                            } else {
-                                console.error('[MQTT] Failed to update user status to offline');
-                            }
-                        })
-                        .catch(error => {
-                            console.error('[MQTT] Error updating user status to offline:', error);
-                        });
+                    this.updatePresenceInDatabase('offline');
                 } else {
                     console.log('[MQTT] Offline event during reconnect, not setting user offline.');
                 }
@@ -255,17 +276,7 @@ class MqttService {
                 // Only set offline if not reconnecting
                 if (this.currentUser && !this.client?.reconnecting) {
                     console.info(`[MQTT] Setting user status to offline in database. Reason: ${reason}`);
-                    DatabaseService.updateUserStatus(this.currentUser.id, 'offline')
-                        .then(success => {
-                            if (success) {
-                                console.log('[MQTT] User status updated to offline successfully');
-                            } else {
-                                console.error('[MQTT] Failed to update user status to offline');
-                            }
-                        })
-                        .catch(error => {
-                            console.error('[MQTT] Error updating user status to offline:', error);
-                        });
+                    this.updatePresenceInDatabase('offline');
                 } else {
                     console.log('[MQTT] Close event during reconnect, not setting user offline.');
                 }
@@ -284,17 +295,7 @@ class MqttService {
             const reason = `MQTT error: ${error?.message || 'unknown'}`;
             if (this.currentUser) {
                 console.info(`[MQTT] Setting user status to offline in database. Reason: ${reason}`);
-                DatabaseService.updateUserStatus(this.currentUser.id, 'offline')
-                    .then(success => {
-                        if (success) {
-                            console.log('[MQTT] User status updated to offline successfully');
-                        } else {
-                            console.error('[MQTT] Failed to update user status to offline');
-                        }
-                    })
-                    .catch(err => {
-                        console.error('[MQTT] Error updating user status to offline:', err);
-                    });
+                this.updatePresenceInDatabase('offline');
             }
 
             // Additional error details for debugging
@@ -366,6 +367,28 @@ class MqttService {
             this.subscriptions.clear();
             this.publishQueue = [];
 
+            // Best-effort beacon to mark offline quickly on abrupt closes
+            try {
+                if (typeof navigator !== 'undefined' && 'sendBeacon' in navigator && this.currentUser) {
+                    const beaconUrl = (import.meta as any)?.env?.VITE_OFFLINE_STATUS_BEACON_URL;
+                    if (beaconUrl) {
+                        const payload = {
+                            userId: this.currentUser.id,
+                            status: 'offline',
+                            timestamp: new Date().toISOString()
+                        };
+                        // Use text/plain to maximize sendBeacon success; function accepts both
+                        const ok = (navigator as any).sendBeacon(
+                            beaconUrl,
+                            new Blob([JSON.stringify(payload)], { type: 'text/plain' })
+                        );
+                        console.log('[MQTT] sendBeacon offline status', ok ? 'queued' : 'failed');
+                    }
+                }
+            } catch (e) {
+                console.error('[MQTT] Beacon send failed:', e);
+            }
+
             const oldClient = this.client;
             // By setting the client to null immediately, we prevent a race condition where
             // a new connection is attempted before the old one has fully closed
@@ -379,17 +402,7 @@ class MqttService {
                     const userId = clientId.split('_')[0]; // Extract user ID from client ID
                     
                     // Update user status in database
-                    DatabaseService.updateUserStatus(userId, 'offline')
-                        .then(success => {
-                            if (success) {
-                                console.log('[MQTT] User status updated to offline in database');
-                            } else {
-                                console.error('[MQTT] Failed to update user status in database');
-                            }
-                        })
-                        .catch(error => {
-                            console.error('[MQTT] Error updating user status in database:', error);
-                        });
+                    this.updatePresenceInDatabase('offline', userId);
                     
                     // Also publish status via MQTT for real-time notification to other clients
                     oldClient.publish(
@@ -549,17 +562,53 @@ class MqttService {
                     status: 'online', 
                     timestamp: new Date().toISOString() 
                 });
-                
-                // Also update database to ensure consistent status
-                DatabaseService.updateUserStatus(this.currentUser.id, 'online')
-                    .catch(error => {
-                        console.error('[MQTT] Heartbeat database update error:', error);
-                    });
+                // Throttled presence write
+                this.updatePresenceInDatabase('online');
             } else {
                 // Stop heartbeat if client is no longer connected
                 this.stopHeartbeat();
             }
         }, 60000); // Update every minute
+    }
+
+    /**
+     * Helper: write presence to DB only when changed or throttled interval passed
+     */
+    private updatePresenceInDatabase(nextStatus: 'online' | 'offline', overrideUserId?: string) {
+        const userId = overrideUserId || this.currentUser?.id;
+        if (!userId) return;
+
+        const now = Date.now();
+        const statusChanged = this.lastPresenceStatus !== nextStatus;
+        const throttled = now - this.lastPresenceUpdateAt >= this.presenceUpdateThrottleMs;
+        if (!statusChanged && !throttled) {
+            return; // Skip unnecessary API call
+        }
+
+        DatabaseService.updateUserStatus(userId, nextStatus)
+            .then(success => {
+                if (success) {
+                    this.lastPresenceStatus = nextStatus;
+                    this.lastPresenceUpdateAt = now;
+                    console.log(`[MQTT] User status updated to ${nextStatus} in database`);
+                } else {
+                    console.error(`[MQTT] Failed to update user status to ${nextStatus}`);
+                }
+            })
+            .catch(error => {
+                console.error('[MQTT] Error updating user status:', error);
+            });
+    }
+
+    constructor() {
+        // Attach unload handlers so we always try to go offline on tab close
+        if (typeof window !== 'undefined') {
+            const handleUnload = () => {
+                try { this.disconnect(); } catch {}
+            };
+            window.addEventListener('beforeunload', handleUnload);
+            window.addEventListener('unload', handleUnload);
+        }
     }
     
     /**

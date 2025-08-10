@@ -1,6 +1,6 @@
 
 import { createClient } from '@/lib/supabase/client';
-import type { Message } from '../types';
+import type { Message, Contact } from '../types';
 import { generateUUID } from '@/utils/uuidUtils';
 
 export interface DatabaseMessage {
@@ -16,6 +16,23 @@ export interface DatabaseMessage {
 }
 
 export class MessageService {
+  // Simple in-memory caches to reduce duplicate network calls
+  private static messagesCache: Map<string, { data: Message[]; ts: number }> = new Map();
+  private static messagesInflight: Map<string, Promise<Message[]>> = new Map();
+  private static latestPerContactsCache: Map<string, { data: Record<string, Message[]>; ts: number }> = new Map();
+  private static latestPerContactsInflight: Map<string, Promise<Record<string, Message[]>>> = new Map();
+  private static unreadCache: Map<string, { data: Record<string, Message[]>; ts: number }> = new Map();
+  private static unreadInflight: Map<string, Promise<Record<string, Message[]>>> = new Map();
+
+  private static isFresh(ts: number, ttlMs: number): boolean {
+    return Date.now() - ts < ttlMs;
+  }
+
+  static clearCaches(): void {
+    this.messagesCache.clear();
+    this.latestPerContactsCache.clear();
+    this.unreadCache.clear();
+  }
   /**
    * Save a message to the database
    */
@@ -49,6 +66,24 @@ export class MessageService {
         return true;
       }
 
+      // Determine recipient for direct messages
+      let recipientId: string | null = null;
+      if (!message.isGroup) {
+        if (isAiSender) {
+          // For AI -> user messages, set recipient to the current authenticated user
+          const { data: { session } } = await supabase.auth.getSession();
+          const currentUserId = session?.user?.id;
+          if (!currentUserId) {
+            console.error('No authenticated user while saving AI message');
+            return false;
+          }
+          recipientId = currentUserId;
+        } else {
+          // For user -> contact (human or AI), recipient is the contact thread id
+          recipientId = message.contactId;
+        }
+      }
+
       const { error } = await supabase
         .from('Message')
         .insert({
@@ -57,9 +92,9 @@ export class MessageService {
           senderId: isAiSender ? null : message.senderId, // Null for AI messages
           aiSenderId: isAiSender ? message.senderId : null, // AI persona ID
           senderName: message.senderName,
-          recipientId: message.isGroup ? null : message.contactId,
+          recipientId: message.isGroup ? null : recipientId,
           groupId: message.isGroup ? message.contactId : null,
-          status: message.status || 'sent',
+          status: (isAiSender || message.isGroup === false && (message.senderId && AI_PERSONAS.some(ai => ai.id === message.contactId))) ? 'read' : (message.status || 'sent'),
           timestamp: typeof message.timestamp === 'string' 
             ? message.timestamp 
             : (message.timestamp instanceof Date 
@@ -71,7 +106,13 @@ export class MessageService {
           replyToId: message.replyTo?.id || null,
           replyToText: message.replyTo?.text || null,
           replyToSenderId: message.replyTo?.senderId || null,
-          replyToSenderName: message.replyTo?.senderName || null
+          replyToSenderName: message.replyTo?.senderName || null,
+          // Forward metadata
+          isForwarded: message.isForwarded || false,
+          forwardedFromMessageId: message.forwardedFromMessageId || null,
+          forwardedFromContactId: message.forwardedFromContactId || null,
+          forwardedById: message.forwardedById || null,
+          forwardedToContactId: message.forwardedToContactId || null,
         });
 
       if (error) {
@@ -84,16 +125,44 @@ export class MessageService {
     } catch (error) {
       console.error('Error saving message:', error);
       return false;
+    } finally {
+      // Clear caches related to this message
+      this.messagesCache.clear();
+      this.latestPerContactsCache.clear();
+      this.unreadCache.clear();
+      this.messagesInflight.clear();
+      this.latestPerContactsInflight.clear();
+      this.unreadInflight.clear();
     }
   }
 
   /**
  * Get messages for a chat (either direct or group)
  */
-static async getMessages(contactId: string, isGroup: boolean = false, limit: number = 50): Promise<Message[]> {
-  const supabase = createClient();
+  static async getMessages(contactId: string, isGroup: boolean = false, limit: number = 50): Promise<Message[]> {
+    const supabase = createClient();
   
   try {
+      // Build cache key
+      let currentUserId: string | undefined = undefined;
+      if (!isGroup) {
+        const { data: { session } } = await supabase.auth.getSession();
+        currentUserId = session?.user?.id || undefined;
+        if (!currentUserId) {
+          console.error('No authenticated user');
+          return [];
+        }
+      }
+      const cacheKey = `${isGroup ? 'group' : 'dm'}:${currentUserId || 'na'}:${contactId}:${limit}`;
+
+      // Use cached value if fresh (TTL 15s)
+      const cached = this.messagesCache.get(cacheKey);
+      if (cached && this.isFresh(cached.ts, 15_000)) {
+        return cached.data;
+      }
+      const inflight = this.messagesInflight.get(cacheKey);
+      if (inflight) return inflight;
+
     let query = supabase
       .from('Message')
       .select(`
@@ -108,6 +177,11 @@ static async getMessages(contactId: string, isGroup: boolean = false, limit: num
         timestamp,
         attachmenturl,
         isAiMessage,
+        isForwarded,
+        forwardedFromMessageId,
+        forwardedFromContactId,
+        forwardedById,
+        forwardedToContactId,
         replyToId,
         replyToText,
         replyToSenderId,
@@ -120,86 +194,89 @@ static async getMessages(contactId: string, isGroup: boolean = false, limit: num
       // For group messages, filter by groupId
       query = query.eq('groupId', contactId);
     } else {
-      // For direct messages, we need to get the current user
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      const currentUserId = session?.user?.id;
-
-      if (!currentUserId) {
-        console.error('No authenticated user');
-        return [];
-      }
-
       // For direct messages, we want messages where:
       // 1. Current user sent to contactId (senderId = currentUserId AND recipientId = contactId)
-      // 2. ContactId sent to current user (senderId = contactId AND recipientId = currentUserId)  
+      // 2. ContactId sent to current user (senderId = contactId AND recipientId = currentUserId)
       // 3. AI sent to current user (aiSenderId = contactId AND recipientId = currentUserId)
+      // 4. Current user sent to AI assistant (senderId = currentUserId AND aiSenderId = contactId)
       // Use .or() for the OR condition
       query = query.is('groupId', null)
-        .or(`and(senderId.eq.${currentUserId},recipientId.eq.${contactId}),and(senderId.eq.${contactId},recipientId.eq.${currentUserId}),and(aiSenderId.eq.${contactId},recipientId.eq.${currentUserId})`);
+        .or(`and(senderId.eq.${currentUserId},recipientId.eq.${contactId}),and(senderId.eq.${contactId},recipientId.eq.${currentUserId}),and(aiSenderId.eq.${contactId},recipientId.eq.${currentUserId}),and(senderId.eq.${currentUserId},aiSenderId.eq.${contactId})`);
     }
 
-    // Remove .limit(limit) to ensure all messages are fetched
+    // Remove .limit(limit) to ensure full history is fetched when opening a chat
 
-    const { data: messages, error } = await query;
-
-    if (error) {
-      console.error('Error fetching messages:', error);
-      return [];
-    }
-
-    if (!messages || messages.length === 0) {
-      return [];
-    }
-
-    // Fetch reactions for all messages
-    const messageIds = messages.map(msg => msg.id);
-    const { data: reactions, error: reactionsError } = await supabase
-      .from('Reaction')
-      .select('*')
-      .in('messageId', messageIds);
-    const reactionsByMessageId: Record<string, { emoji: string, userId: string }[]> = {};
-    if (reactions) {
-      for (const reaction of reactions) {
-        if (!reactionsByMessageId[reaction.messageId]) {
-          reactionsByMessageId[reaction.messageId] = [];
+    const pending = (async (): Promise<Message[]> => {
+      try {
+        const { data: messages, error } = await query;
+        if (error) {
+          console.error('Error fetching messages:', error);
+          return [] as Message[];
         }
-        reactionsByMessageId[reaction.messageId].push({
-          emoji: reaction.emoji,
-          userId: reaction.userId
-        });
+        if (!messages || messages.length === 0) {
+          this.messagesCache.set(cacheKey, { data: [], ts: Date.now() });
+          return [] as Message[];
+        }
+
+        // Fetch reactions for all messages
+        const messageIds = messages.map((msg: any) => msg.id);
+        const { data: reactions } = await supabase
+          .from('Reaction')
+          .select('*')
+          .in('messageId', messageIds);
+        const reactionsByMessageId: Record<string, { emoji: string, userId: string }[]> = {};
+        if (reactions) {
+          for (const reaction of reactions) {
+            if (!reactionsByMessageId[reaction.messageId]) {
+              reactionsByMessageId[reaction.messageId] = [];
+            }
+            reactionsByMessageId[reaction.messageId].push({
+              emoji: reaction.emoji,
+              userId: reaction.userId
+            });
+          }
+        }
+
+        const mapped: Message[] = messages.map((msg: any) => ({
+          type: 'chat' as const,
+          id: msg.id,
+          contactId: msg.groupId || msg.recipientId || '',
+          text: msg.text,
+          senderId: msg.isAiMessage ? msg.aiSenderId : msg.senderId,
+          senderName: msg.senderName || (msg.sender as any)?.name || 'Unknown',
+          timestamp: msg.timestamp,
+          status: msg.status as 'sent' | 'delivered' | 'read',
+          isGroup: !!msg.groupId,
+          isForwarded: !!(msg as any).isForwarded,
+          forwardedFromMessageId: (msg as any).forwardedFromMessageId || undefined,
+          forwardedFromContactId: (msg as any).forwardedFromContactId || undefined,
+          forwardedById: (msg as any).forwardedById || undefined,
+          forwardedToContactId: (msg as any).forwardedToContactId || undefined,
+          reactions: reactionsByMessageId[msg.id] || [],
+          ...(msg.attachmenturl && { 
+            attachment: { 
+              type: 'image' as const, 
+              url: msg.attachmenturl 
+            } 
+          }),
+          ...(msg.replyToId && {
+            replyTo: {
+              id: msg.replyToId,
+              text: msg.replyToText || '',
+              senderId: msg.replyToSenderId || '',
+              senderName: msg.replyToSenderName || 'Unknown'
+            }
+          })
+        }));
+
+        this.messagesCache.set(cacheKey, { data: mapped, ts: Date.now() });
+        return mapped;
+      } finally {
+        this.messagesInflight.delete(cacheKey);
       }
-    }
-
-    // Convert database messages to app message format
-    return messages.map(msg => ({
-      type: 'chat' as const,
-      id: msg.id,
-      contactId: msg.groupId || msg.recipientId || '',
-      text: msg.text,
-      senderId: msg.isAiMessage ? msg.aiSenderId : msg.senderId,
-      senderName: msg.senderName || (msg.sender as any)?.name || 'Unknown',
-      timestamp: msg.timestamp, // Keep as ISO string for consistent date handling
-      status: msg.status as 'sent' | 'delivered' | 'read',
-      isGroup: !!msg.groupId,
-      reactions: reactionsByMessageId[msg.id] || [],
-      ...(msg.attachmenturl && { 
-        attachment: { 
-          type: 'image' as const, 
-          url: msg.attachmenturl 
-        } 
-      }),
-      ...(msg.replyToId && {
-        replyTo: {
-          id: msg.replyToId,
-          text: msg.replyToText || '',
-          senderId: msg.replyToSenderId || '',
-          senderName: msg.replyToSenderName || 'Unknown'
-        }
-      })
-    }));
+    })();
+    this.messagesInflight.set(cacheKey, pending);
+    return pending;
   } catch (error) {
     console.error('Error fetching messages:', error);
     return [];
@@ -405,21 +482,22 @@ static async getMessages(contactId: string, isGroup: boolean = false, limit: num
    * Get unread messages for a user
    * This is used when a user logs in to check for messages received while offline
    */
-  static async getUnreadMessages(userId: string): Promise<{ [contactId: string]: Message[] }> {
+  static async getUnreadMessages(userId: string, lastSeenISO?: string): Promise<{ [contactId: string]: Message[] }> {
     const supabase = createClient();
     
     try {
-      // Get the user's last seen time to find messages received while offline
-      const { data: userData, error: userError } = await supabase
-        .from('User')
-        .select('lastSeen')
-        .eq('id', userId)
-        .single();
-      if (userError) {
-        console.error('Error fetching user last seen time:', userError);
+      const cacheKey = `unread:${userId}:${lastSeenISO || 'none'}`;
+      const cached = this.unreadCache.get(cacheKey);
+      if (cached && this.isFresh(cached.ts, 10_000)) {
+        return cached.data;
       }
-      const lastSeenTime = userData?.lastSeen ? new Date(userData.lastSeen) : null;
-      console.log('User last seen time:', lastSeenTime?.toISOString() || 'None');
+      const inflight = this.unreadInflight.get(cacheKey);
+      if (inflight) return await inflight;
+      const promise = (async (): Promise<Record<string, Message[]>> => {
+        try {
+        // Use the provided lastSeen value if available to avoid redundant API calls
+        const lastSeenTime = lastSeenISO ? new Date(lastSeenISO) : null;
+        console.log('User last seen time:', lastSeenTime?.toISOString() || 'None');
       
       // Get the groups the user is a member of
       const { data: groupData, error: groupError } = await supabase
@@ -553,9 +631,216 @@ static async getMessages(contactId: string, isGroup: boolean = false, limit: num
         });
       });
 
-      return unreadMessages;
+          this.unreadCache.set(cacheKey, { data: unreadMessages, ts: Date.now() });
+          return unreadMessages;
+        } catch (error) {
+          console.error('Error fetching unread messages:', error);
+          return {} as Record<string, Message[]>;
+        }
+      })();
+      try {
+        this.unreadInflight.set(cacheKey, promise);
+        const result = await promise;
+        return result;
+      } finally {
+        this.unreadInflight.delete(cacheKey);
+      }
     } catch (error) {
-      console.error('Error fetching unread messages:', error);
+      console.error('Error in getUnreadMessages wrapper:', error);
+      return {} as Record<string, Message[]>;
+    }
+  }
+
+  /**
+   * Fetch the latest message per contact (DMs and groups) to prime conversation list sorting.
+   * This avoids fetching full histories on initial load.
+   */
+  static async getLatestMessagesForContacts(
+    userId: string,
+    contacts: Contact[],
+    perContactLimit: number = 1
+  ): Promise<Record<string, Message[]>> {
+    const supabase = createClient();
+    try {
+      const cacheKey = `latest:${userId}:${contacts.length}:${perContactLimit}`;
+      const cached = this.latestPerContactsCache.get(cacheKey);
+      if (cached && this.isFresh(cached.ts, 15_000)) {
+        return cached.data;
+      }
+      const inflight = this.latestPerContactsInflight.get(cacheKey);
+      if (inflight) return inflight;
+
+      const directContactIds = contacts
+        .filter(c => !c.isGroup)
+        .map(c => c.id);
+      const groupIds = contacts.filter(c => c.isGroup).map(c => c.id);
+
+      const results: Message[] = [];
+
+      // Fetch latest direct messages in a single query using OR with IN lists
+      if (directContactIds.length > 0) {
+        const idList = directContactIds.join(',');
+        // Build OR conditions:
+        // 1) senderId = userId AND recipientId IN (contacts)
+        // 2) senderId IN (contacts) AND recipientId = userId
+        // 3) aiSenderId IN (contacts) AND recipientId = userId
+        const orClause = [
+          `and(senderId.eq.${userId},recipientId.in.(${idList}))`,
+          `and(senderId.in.(${idList}),recipientId.eq.${userId})`,
+          `and(aiSenderId.in.(${idList}),recipientId.eq.${userId})`,
+          `and(senderId.eq.${userId},aiSenderId.in.(${idList}))`
+        ].join(',');
+
+        const { data, error } = await supabase
+          .from('Message')
+          .select(`
+            id,
+            text,
+            senderId,
+            aiSenderId,
+            senderName,
+            recipientId,
+            groupId,
+            status,
+            timestamp,
+            attachmenturl,
+            isAiMessage,
+            isForwarded,
+            forwardedFromMessageId,
+            forwardedFromContactId,
+            forwardedById,
+            forwardedToContactId,
+            replyToId,
+            replyToText,
+            replyToSenderId,
+            replyToSenderName
+          `)
+          .is('groupId', null)
+          .or(orClause)
+          .order('timestamp', { ascending: false })
+          .limit(Math.max(50, perContactLimit * directContactIds.length * 2));
+
+        if (error) {
+          console.error('Error fetching latest direct messages:', error);
+        } else if (data) {
+          results.push(
+            ...data.map(msg => ({
+              type: 'chat' as const,
+              id: msg.id,
+              contactId: (msg.senderId && msg.senderId !== userId) ? msg.senderId : (msg.recipientId && msg.recipientId !== userId ? msg.recipientId : (msg.aiSenderId || '')),
+              text: msg.text,
+              senderId: msg.isAiMessage ? msg.aiSenderId : msg.senderId,
+              senderName: msg.senderName || 'Unknown',
+              timestamp: msg.timestamp,
+              status: msg.status as 'sent' | 'delivered' | 'read',
+              isGroup: false,
+              isForwarded: !!(msg as any).isForwarded,
+              forwardedFromMessageId: (msg as any).forwardedFromMessageId || undefined,
+              forwardedFromContactId: (msg as any).forwardedFromContactId || undefined,
+              forwardedById: (msg as any).forwardedById || undefined,
+              forwardedToContactId: (msg as any).forwardedToContactId || undefined,
+              ...(msg.attachmenturl && { 
+                attachment: { type: 'image' as const, url: msg.attachmenturl }
+              }),
+              ...(msg.replyToId && {
+                replyTo: {
+                  id: msg.replyToId,
+                  text: msg.replyToText || '',
+                  senderId: msg.replyToSenderId || '',
+                  senderName: msg.replyToSenderName || 'Unknown'
+                }
+              })
+            }))
+          );
+        }
+      }
+
+      // Fetch latest group messages
+      if (groupIds.length > 0) {
+        const { data, error } = await supabase
+          .from('Message')
+          .select(`
+            id,
+            text,
+            senderId,
+            aiSenderId,
+            senderName,
+            recipientId,
+            groupId,
+            status,
+            timestamp,
+            attachmenturl,
+            isAiMessage,
+            isForwarded,
+            forwardedFromMessageId,
+            forwardedFromContactId,
+            forwardedById,
+            forwardedToContactId,
+            replyToId,
+            replyToText,
+            replyToSenderId,
+            replyToSenderName
+          `)
+          .in('groupId', groupIds)
+          .order('timestamp', { ascending: false })
+          .limit(Math.max(50, perContactLimit * groupIds.length * 2));
+
+        if (error) {
+          console.error('Error fetching latest group messages:', error);
+        } else if (data) {
+          results.push(
+            ...data.map(msg => ({
+              type: 'chat' as const,
+              id: msg.id,
+              contactId: msg.groupId || '',
+              text: msg.text,
+              senderId: msg.isAiMessage ? msg.aiSenderId : msg.senderId,
+              senderName: msg.senderName || 'Unknown',
+              timestamp: msg.timestamp,
+              status: msg.status as 'sent' | 'delivered' | 'read',
+              isGroup: true,
+              isForwarded: !!(msg as any).isForwarded,
+              forwardedFromMessageId: (msg as any).forwardedFromMessageId || undefined,
+              forwardedFromContactId: (msg as any).forwardedFromContactId || undefined,
+              forwardedById: (msg as any).forwardedById || undefined,
+              forwardedToContactId: (msg as any).forwardedToContactId || undefined,
+              ...(msg.attachmenturl && { 
+                attachment: { type: 'image' as const, url: msg.attachmenturl }
+              }),
+              ...(msg.replyToId && {
+                replyTo: {
+                  id: msg.replyToId,
+                  text: msg.replyToText || '',
+                  senderId: msg.replyToSenderId || '',
+                  senderName: msg.replyToSenderName || 'Unknown'
+                }
+              })
+            }))
+          );
+        }
+      }
+
+      // Reduce to latest per contact
+      const latestByContact: Record<string, Message[]> = {};
+      const seen = new Set<string>();
+
+      // Sort all results descending by timestamp to pick newest first
+      results.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      for (const msg of results) {
+        const key = msg.contactId;
+        if (!key || seen.has(key)) continue;
+        latestByContact[key] = [msg];
+        seen.add(key);
+        if (seen.size >= contacts.length) break;
+      }
+
+      // Ensure ascending order within each contact bucket
+      Object.values(latestByContact).forEach(arr => arr.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()));
+
+      this.latestPerContactsCache.set(cacheKey, { data: latestByContact, ts: Date.now() });
+      return latestByContact;
+    } catch (error) {
+      console.error('Error fetching latest messages for contacts:', error);
       return {};
     }
   }

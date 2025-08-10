@@ -38,6 +38,7 @@
     contactUserId    String?   // Nullable for AI contacts
     isAi             Boolean   @default(false)
     aiPersonaId      String?   // For AI contacts, stores the AI persona ID
+    topicId          String?   // Common MQTT topic for this contact relationship
     isPinned         Boolean   @default(false)
     createdAt        DateTime  @default(now())
     updatedAt        DateTime  @updatedAt
@@ -109,6 +110,12 @@
     timestamp        DateTime  @default(now())
     attachmenturl    String?
     isAiMessage      Boolean   @default(false) // Flag to identify AI messages
+    // Forwarding fields
+    isForwarded      Boolean   @default(false)
+    forwardedFromMessageId String?
+    forwardedFromContactId String?
+    forwardedById    String?
+    forwardedToContactId String?
     
     // Reply fields
     replyToId        String?

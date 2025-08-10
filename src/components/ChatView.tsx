@@ -29,13 +29,8 @@ import CheckIcon from './icons/CheckIcon';
 import ReplyIcon from './icons/ReplyIcon';
 import ChatBubbleLeftRightIcon from './icons/ChatBubbleLeftRightIcon';
 
-import type {
-  Contact,
-  Message,
-  Attachment,
-  User,
-  ReadReceipt
-} from '../types';
+import type { Contact, Message, Attachment, User, ReadReceipt, TypingIndicatorPayload } from '../types';
+import { Button } from './ui/button';
 
 interface ChatViewProps {
   contact: Contact | undefined;
@@ -288,7 +283,7 @@ const ChatView: React.FC<ChatViewProps> = ({
 
     const topic = contact.isGroup 
         ? `chat/${contact.id}` 
-        : `chat/${[currentUser.id, contact.id].sort().join('-')}`;
+        : (contact.topicId || `chat/${[currentUser.id, contact.id].sort().join('-')}`);
 
     const publishTyping = (state: 'start' | 'stop') => {
         const payload: TypingIndicatorPayload = { type: 'typing', contactId: contact.id, userId: currentUser.id, userName: currentUser.name, state };
@@ -370,7 +365,7 @@ const ChatView: React.FC<ChatViewProps> = ({
         clearTimeout(typingTimeoutRef.current);
         const topic = contact.isGroup 
             ? `chat/${contact.id}` 
-            : `chat/${[currentUser.id, contact.id].sort().join('-')}`;
+            : (contact.topicId || `chat/${[currentUser.id, contact.id].sort().join('-')}`);
         const payload: TypingIndicatorPayload = { type: 'typing', contactId: contact.id, userId: currentUser.id, userName: currentUser.name, state: 'stop' };
         mqttService.publish(topic, payload);
         typingTimeoutRef.current = null;
@@ -424,7 +419,7 @@ const ChatView: React.FC<ChatViewProps> = ({
 
   if (!contact) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-slate-100 dark:bg-slate-900 overflow-y-auto p-4 md:p-8">
+      <div className="flex-1 flex items-center justify-center bg-slate-100 dark:bg-background overflow-y-auto p-4 md:p-8">
         <div className="text-center max-w-2xl w-full animate-[fade-in_0.5s]">
           <div className="inline-block p-4 bg-indigo-100 dark:bg-indigo-900/40 rounded-full mb-6">
             <ChatBubbleLeftRightIcon className="w-12 h-12 text-indigo-600 dark:text-indigo-400" />
@@ -437,18 +432,18 @@ const ChatView: React.FC<ChatViewProps> = ({
           </p>
 
           <div className="flex flex-col sm:flex-row gap-4 justify-center mb-12">
-            <button
+            <Button
               onClick={onInviteUser}
               className="flex-1 text-white bg-indigo-600 hover:bg-indigo-700 focus:ring-4 focus:outline-none focus:ring-indigo-300 dark:focus:ring-indigo-800 font-medium rounded-lg text-base px-6 py-3.5 text-center transition-colors"
             >
               Invite a Friend
-            </button>
-            <button
+            </Button>
+            <Button
               onClick={onNewGroup}
               className="flex-1 text-slate-900 bg-slate-200 hover:bg-slate-300 focus:ring-4 focus:outline-none focus:ring-slate-300 font-medium rounded-lg text-base px-6 py-3.5 text-center dark:bg-slate-800 dark:text-white dark:hover:bg-slate-700 dark:focus:ring-slate-700 transition-colors"
             >
               Create a Group
-            </button>
+            </Button>
           </div>
 
           <div className="text-left">

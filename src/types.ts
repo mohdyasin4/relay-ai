@@ -36,6 +36,10 @@ export interface Message {
     userId: string;
   }[];
   isForwarded?: boolean;
+  forwardedFromMessageId?: string;
+  forwardedFromContactId?: string;
+  forwardedById?: string;
+  forwardedToContactId?: string;
   isGroup?: boolean;
   replyTo?: {
     id: string;
@@ -55,6 +59,7 @@ export interface Contact {
   memberIds?: string[];
   creatorId?: string; // ID of the user who created the group
   isPinned?: boolean;
+  topicId?: string; // Common MQTT topic for this contact (DMs only)
   status: 'online' | 'away' | 'offline';
   lastSeen?: string; // ISO string
 }

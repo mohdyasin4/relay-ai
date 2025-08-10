@@ -77,13 +77,11 @@ if (!rootElement) {
 
 const root = ReactDOM.createRoot(rootElement);
 root.render(
-  <React.StrictMode>
-    <ThemeProvider defaultTheme='dark' storageKey='vite-ui-theme'>
+  <ThemeProvider defaultTheme='dark' storageKey='vite-ui-theme'>
     <AuthProvider>
       <Router>
         <AuthGuard />
       </Router>
     </AuthProvider>
-    </ThemeProvider>
-  </React.StrictMode>
+  </ThemeProvider>
 );

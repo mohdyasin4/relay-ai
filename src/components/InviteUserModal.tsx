@@ -2,9 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { Search, UserPlus, Loader2, Users } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
 import { Badge } from './ui/badge';
+import Modal from './Modal';
 import { createClient } from '@/lib/supabase/client';
 import { FriendsService } from '../services/friendsService';
 import GoogleContactsService, { type ProcessedContact } from '../services/googleContactsService';
@@ -15,6 +15,7 @@ interface InviteUserModalProps {
   isOpen: boolean;
   onClose: () => void;
   currentUser: User;
+  embedded?: boolean; // Render content without Dialog wrapper
 }
 
 interface SearchResult extends User {
@@ -22,7 +23,7 @@ interface SearchResult extends User {
   source?: 'app' | 'google';
 }
 
-const InviteUserModal: React.FC<InviteUserModalProps> = ({ isOpen, onClose, currentUser }) => {
+const InviteUserModal: React.FC<InviteUserModalProps> = ({ isOpen, onClose, currentUser, embedded = false }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [allContacts, setAllContacts] = useState<SearchResult[]>([]); // Combined app users and Google contacts
@@ -32,12 +33,13 @@ const InviteUserModal: React.FC<InviteUserModalProps> = ({ isOpen, onClose, curr
   const [hasGoogleContacts, setHasGoogleContacts] = useState(false);
   const [needsGoogleReauth, setNeedsGoogleReauth] = useState(false);
 
-  // Load all contacts (app users + Google contacts) on mount
+  // Load all contacts (app users + Google contacts)
   useEffect(() => {
-    if (isOpen) {
+    if (embedded || isOpen) {
       loadAllContacts();
     }
-  }, [isOpen]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, embedded]);
 
   const loadAllContacts = async () => {
     setIsLoadingContacts(true);
@@ -437,9 +439,9 @@ const InviteUserModal: React.FC<InviteUserModalProps> = ({ isOpen, onClose, curr
     
     return (
       <div className="flex items-center space-x-3 p-3 rounded-lg border hover:bg-accent/50 transition-colors">
-        <Avatar className="w-10 h-10">
+        <Avatar className="rounded-md w-10 h-10">
           <AvatarImage src={user.avatarUrl} />
-          <AvatarFallback>
+          <AvatarFallback className='rounded-none font-extrabold'>
             {user.name.charAt(0).toUpperCase()}
           </AvatarFallback>
         </Avatar>
@@ -530,132 +532,141 @@ const InviteUserModal: React.FC<InviteUserModalProps> = ({ isOpen, onClose, curr
     );
   };
 
-  return (
-    <Dialog open={isOpen} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Add Friends</DialogTitle>
-          <DialogDescription>
-            Search for users or browse your contacts to send friend requests.
-          </DialogDescription>
-        </DialogHeader>
-        
-        <div className="space-y-4">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
-            <Input
-              placeholder="Search by name or email..."
-              value={searchQuery}
-              onChange={(e) => {
-                setSearchQuery(e.target.value);
-                searchUsers(e.target.value);
-              }}
-              className="pl-10"
-            />
-          </div>
+  const content = (
+    <div className="space-y-4">
+      <div>
+        <p className="text-sm text-muted-foreground">
+          Search for users or browse your contacts to send friend requests.
+        </p>
+      </div>
 
-          <div className="space-y-2 max-h-60 overflow-y-auto">
-            {isSearching ? (
-              <div className="flex items-center justify-center py-4">
-                <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                Searching...
-              </div>
-            ) : searchQuery.trim() ? (
-              searchResults.length > 0 ? (
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
+        <Input
+          placeholder="Search by name or email..."
+          value={searchQuery}
+          onChange={(e) => {
+            setSearchQuery(e.target.value);
+            searchUsers(e.target.value);
+          }}
+          className="pl-10"
+        />
+      </div>
+
+      <div className="space-y-2 max-h-60 overflow-y-auto">
+        {isSearching ? (
+          <div className="flex items-center justify-center py-4">
+            <Loader2 className="w-4 h-4 animate-spin mr-2" />
+            Searching...
+          </div>
+        ) : searchQuery.trim() ? (
+          searchResults.length > 0 ? (
+            <>
+              <p className="text-sm text-muted-foreground mb-2">
+                {searchResults.length} results found
+              </p>
+              {searchResults.map((user) => (
+                <UserCard
+                  key={user.id}
+                  user={user}
+                  onSendRequest={sendFriendRequest}
+                  sendingRequest={sendingRequest}
+                  getStatusBadge={getStatusBadge}
+                />
+              ))}
+            </>
+          ) : (
+            <div className="text-center py-8 text-muted-foreground">
+              <Search className="w-12 h-12 mx-auto mb-2 opacity-20" />
+              <p className="font-medium">No users found</p>
+              <p className="text-sm">No users found matching "{searchQuery}"</p>
+            </div>
+          )
+        ) : (
+          allContacts.length > 0 || isLoadingContacts ? (
+            <>
+              {isLoadingContacts ? (
+                <div className="flex items-center justify-center py-4">
+                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  Loading contacts...
+                </div>
+              ) : (
                 <>
                   <p className="text-sm text-muted-foreground mb-2">
-                    {searchResults.length} results found
+                    {allContacts.length} contacts available{hasGoogleContacts && ' (including Google contacts)'}
                   </p>
-                  {searchResults.map((user) => (
+                  {allContacts.map((contact, index) => (
                     <UserCard
-                      key={user.id}
-                      user={user}
+                      key={`${contact.id}-${index}`}
+                      user={contact}
                       onSendRequest={sendFriendRequest}
                       sendingRequest={sendingRequest}
                       getStatusBadge={getStatusBadge}
                     />
                   ))}
                 </>
-              ) : (
-                <div className="text-center py-8 text-muted-foreground">
-                  <Search className="w-12 h-12 mx-auto mb-2 opacity-20" />
-                  <p className="font-medium">No users found</p>
-                  <p className="text-sm">No users found matching "{searchQuery}"</p>
-                </div>
-              )
-            ) : (
-              allContacts.length > 0 || isLoadingContacts ? (
-                <>
-                  {isLoadingContacts ? (
-                    <div className="flex items-center justify-center py-4">
-                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                      Loading contacts...
-                    </div>
-                  ) : (
-                    <>
-                      <p className="text-sm text-muted-foreground mb-2">
-                        {allContacts.length} contacts available{hasGoogleContacts && ' (including Google contacts)'}
+              )}
+              {needsGoogleReauth && !isLoadingContacts && (
+                <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                  <div className="flex items-start space-x-3">
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-blue-900">Connect Google Contacts</p>
+                      <p className="text-sm text-blue-700 mt-1">
+                        To see your Google contacts, please re-authenticate with Google to grant contacts access.
                       </p>
-                      {allContacts.map((contact, index) => (
-                        <UserCard
-                          key={`${contact.id}-${index}`}
-                          user={contact}
-                          onSendRequest={sendFriendRequest}
-                          sendingRequest={sendingRequest}
-                          getStatusBadge={getStatusBadge}
-                        />
-                      ))}
-                    </>
-                  )}
-                  {needsGoogleReauth && !isLoadingContacts && (
-                    <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                      <div className="flex items-start space-x-3">
-                        <div className="flex-1">
-                          <p className="text-sm font-medium text-blue-900">Connect Google Contacts</p>
-                          <p className="text-sm text-blue-700 mt-1">
-                            To see your Google contacts, please re-authenticate with Google to grant contacts access.
-                          </p>
-                        </div>
-                        <Button 
-                          size="sm" 
-                          onClick={handleGoogleReauth}
-                          className="bg-blue-600 hover:bg-blue-700"
-                        >
-                          Connect
-                        </Button>
-                      </div>
                     </div>
-                  )}
-                </>
-              ) : (
-                <div className="text-center py-8 text-muted-foreground">
-                  <Users className="w-12 h-12 mx-auto mb-2 opacity-20" />
-                  <p className="font-medium">Start searching</p>
-                  <p className="text-sm">Type a name or email to find users</p>
-                  {needsGoogleReauth && (
-                    <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                      <div className="flex flex-col items-center space-y-2">
-                        <p className="text-sm font-medium text-blue-900">Connect Google Contacts</p>
-                        <p className="text-sm text-blue-700 text-center">
-                          Connect your Google account to see and invite your contacts.
-                        </p>
-                        <Button 
-                          size="sm" 
-                          onClick={handleGoogleReauth}
-                          className="bg-blue-600 hover:bg-blue-700"
-                        >
-                          Connect Google Contacts
-                        </Button>
-                      </div>
-                    </div>
-                  )}
+                    <Button 
+                      size="sm" 
+                      onClick={handleGoogleReauth}
+                      className="bg-blue-600 hover:bg-blue-700"
+                    >
+                      Connect
+                    </Button>
+                  </div>
                 </div>
-              )
-            )}
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
+              )}
+            </>
+          ) : (
+            <div className="text-center py-8 text-muted-foreground">
+              <Users className="w-12 h-12 mx-auto mb-2 opacity-20" />
+              <p className="font-medium">Start searching</p>
+              <p className="text-sm">Type a name or email to find users</p>
+              {needsGoogleReauth && (
+                <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                  <div className="flex flex-col items-center space-y-2">
+                    <p className="text-sm font-medium text-blue-900">Connect Google Contacts</p>
+                    <p className="text-sm text-blue-700 text-center">
+                      Connect your Google account to see and invite your contacts.
+                    </p>
+                    <Button 
+                      size="sm" 
+                      onClick={handleGoogleReauth}
+                      className="bg-blue-600 hover:bg-blue-700"
+                    >
+                      Connect Google Contacts
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )
+        )}
+      </div>
+    </div>
+  );
+
+  if (embedded) {
+    return content;
+  }
+
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={handleClose}
+      title="Add Friends"
+    >
+      {content}
+    </Modal>
   );
 };
 

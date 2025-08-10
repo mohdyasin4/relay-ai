@@ -8,6 +8,8 @@ interface User {
   email: string;
   name: string;
   avatar?: string;
+  status?: 'online' | 'offline' | 'away';
+  lastSeen?: string;
 }
 
 interface AuthContextType {
@@ -64,7 +66,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
               id: dbUser.id,
               name: dbUser.name,
               email: session.user.email || '',
-              avatar: dbUser.avatarUrl || session.user.user_metadata?.avatar_url
+              avatar: dbUser.avatarUrl || session.user.user_metadata?.avatar_url,
+              status: dbUser.status,
+              lastSeen: dbUser.lastSeen || undefined
             };
             
             setUser(userData);
@@ -86,7 +90,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
                   id: newUser.id,
                   name: newUser.name,
                   email: session.user.email || '',
-                  avatar: newUser.avatarUrl || session.user.user_metadata?.avatar_url
+                  avatar: newUser.avatarUrl || session.user.user_metadata?.avatar_url,
+                  status: newUser.status,
+                  lastSeen: newUser.lastSeen || undefined
                 };
                 
                 setUser(userData);
@@ -136,7 +142,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             id: dbUser.id,
             name: dbUser.name,
             email: data.user.email || '',
-            avatar: dbUser.avatarUrl || data.user.user_metadata?.avatar_url
+            avatar: dbUser.avatarUrl || data.user.user_metadata?.avatar_url,
+            status: dbUser.status,
+            lastSeen: dbUser.lastSeen || undefined
           };
           
           setUser(userData);
@@ -214,7 +222,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
               id: newUser.id,
               name: newUser.name,
               email: data.user.email || '',
-              avatar: newUser.avatarUrl || data.user.user_metadata?.avatar_url
+              avatar: newUser.avatarUrl || data.user.user_metadata?.avatar_url,
+              status: newUser.status,
+              lastSeen: newUser.lastSeen || undefined
             };
             
             setUser(userData);
@@ -292,7 +302,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             id: dbUser.id,
             name: dbUser.name,
             email: session.user.email || '',
-            avatar: dbUser.avatarUrl || session.user.user_metadata?.avatar_url
+            avatar: dbUser.avatarUrl || session.user.user_metadata?.avatar_url,
+            status: dbUser.status,
+            lastSeen: dbUser.lastSeen || undefined
           };
           
           setUser(userData);
@@ -315,7 +327,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
                 id: newUser.id,
                 name: newUser.name,
                 email: session.user.email || '',
-                avatar: newUser.avatarUrl || session.user.user_metadata?.avatar_url
+                avatar: newUser.avatarUrl || session.user.user_metadata?.avatar_url,
+                status: newUser.status,
+                lastSeen: newUser.lastSeen || undefined
               };
               
               setUser(userData);

@@ -9,11 +9,13 @@ interface NewGroupModalProps {
   contacts: Contact[];
   aiPersonas: Contact[];
   onCreateGroup: (name: string, memberIds: string[]) => void;
+  embedded?: boolean; // Render content without Dialog wrapper
 }
 
-const NewGroupModal: React.FC<NewGroupModalProps> = ({ isOpen, onClose, contacts, aiPersonas, onCreateGroup }) => {
+const NewGroupModal: React.FC<NewGroupModalProps> = ({ isOpen, onClose, contacts, aiPersonas, onCreateGroup, embedded = false }) => {
   const [groupName, setGroupName] = useState('');
   const [selectedMembers, setSelectedMembers] = useState<Set<string>>(new Set());
+  const [isCreating, setIsCreating] = useState(false);
 
   const handleToggleMember = (contactId: string) => {
     setSelectedMembers(prev => {
@@ -27,33 +29,27 @@ const NewGroupModal: React.FC<NewGroupModalProps> = ({ isOpen, onClose, contacts
     });
   };
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     if (groupName.trim() && selectedMembers.size > 0) {
-      onCreateGroup(groupName.trim(), Array.from(selectedMembers));
-      // Reset state for next time
-      setGroupName('');
-      setSelectedMembers(new Set());
+      setIsCreating(true);
+      try {
+        await Promise.resolve(onCreateGroup(groupName.trim(), Array.from(selectedMembers)));
+        // Reset state for next time
+        setGroupName('');
+        setSelectedMembers(new Set());
+        onClose();
+      } finally {
+        setIsCreating(false);
+      }
     }
   };
   
-  const canCreate = groupName.trim() && selectedMembers.size > 0;
+  const canCreate = groupName.trim() && selectedMembers.size > 0 && !isCreating;
 
   const dummyUser: User = { id: '', name: '' }; // Dummy user for avatar rendering context
 
-  return (
-    <Modal
-      isOpen={isOpen}
-      onClose={onClose}
-      title="Create New Group"
-      footer={
-        <div className="flex justify-end">
-          <button onClick={handleCreate} disabled={!canCreate} className="px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 transition-colors disabled:bg-slate-400 dark:disabled:bg-slate-700 disabled:cursor-not-allowed">
-            Create Group
-          </button>
-        </div>
-      }
-    >
-      <div className="space-y-4">
+  const content = (
+    <div className="space-y-4">
         <div>
           <label htmlFor="groupName" className="block mb-2 text-sm font-medium text-slate-600 dark:text-slate-300">Group Name</label>
           <input
@@ -119,7 +115,39 @@ const NewGroupModal: React.FC<NewGroupModalProps> = ({ isOpen, onClose, contacts
             })}
           </ul>
         </div>
-      </div>
+        {/* Create Group button inside modal content */}
+        <div className="flex justify-end pt-2">
+          <button onClick={handleCreate} disabled={!canCreate} className="px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 transition-colors disabled:bg-slate-400 dark:disabled:bg-slate-700 disabled:cursor-not-allowed flex items-center gap-2">
+            {isCreating && (
+              <span className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></span>
+            )}
+            Create Group
+          </button>
+        </div>
+    </div>
+  );
+
+  if (embedded) {
+    return content;
+  }
+
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Create New Group"
+      footer={
+        <div className="flex justify-end">
+          <button onClick={handleCreate} disabled={!canCreate} className="px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 transition-colors disabled:bg-slate-400 dark:disabled:bg-slate-700 disabled:cursor-not-allowed flex items-center gap-2">
+            {isCreating && (
+              <span className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></span>
+            )}
+            Create Group
+          </button>
+        </div>
+      }
+    >
+      {content}
     </Modal>
   );
 };

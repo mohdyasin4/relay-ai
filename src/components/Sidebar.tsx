@@ -1,16 +1,15 @@
 import React, { useMemo, useState, useRef, useEffect } from 'react';
 import type { Contact, MessagesState, User, Theme } from '../types';
 import GeneratedAvatar from './GeneratedAvatar';
-import UsersIcon from './icons/UsersIcon';
 import SettingsIcon from './icons/SettingsIcon';
-import PinIcon from './icons/PinIcon';
-import UserPlusIcon from './icons/UserPlusIcon';
-import UserIcon from './icons/UserIcon';
+import { Bell as IconBell, Pin, PlusIcon } from 'lucide-react';
+import { Badge } from './ui/badge';
 import SearchIcon from './icons/SearchIcon';
 import CloseIcon from './icons/CloseIcon';
 import LogOutIcon from './icons/LogOutIcon';
 import TypingIndicator from './icons/TypingIndicator';
 import { DateUtils } from '../utils/dateUtils';
+import { Button } from './ui/button';
 
 interface SidebarProps {
   contacts: Contact[];
@@ -28,9 +27,10 @@ interface SidebarProps {
   style?: React.CSSProperties;
   theme: Theme;
   typingIndicators: Record<string, Record<string, string>>;
+  pendingFriendRequestsCount?: number;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ contacts, messages, unreadCounts, selectedContactId, onSelectContact, user, onNewGroup, onSettings, onLogout, onTogglePin, onInviteUser, onFriendRequests, style, theme, typingIndicators }) => {
+const Sidebar: React.FC<SidebarProps> = ({ contacts, messages, unreadCounts, selectedContactId, onSelectContact, user, onNewGroup, onSettings, onLogout, onTogglePin, onInviteUser, onFriendRequests, style, theme, typingIndicators, pendingFriendRequestsCount = 0 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isUserMenuOpen, setUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
@@ -45,47 +45,18 @@ const Sidebar: React.FC<SidebarProps> = ({ contacts, messages, unreadCounts, sel
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const sortedContacts = useMemo(() => {
-    // Filter contacts by search term if present
-    const filtered = searchTerm
-      ? contacts.filter(c => c.name.toLowerCase().includes(searchTerm.toLowerCase()))
-      : contacts;
+  // Only filter here; sorting is handled upstream. This ensures the sidebar
+  // renders contacts according to the sorted list provided by parent.
+  const filteredContacts = useMemo(() => {
+    if (!searchTerm) return contacts;
+    const lower = searchTerm.toLowerCase();
+    return contacts.filter(c => c.name.toLowerCase().includes(lower));
+  }, [contacts, searchTerm]);
 
-    // Sort contacts by most recent message timestamp (descending)
-    return [...filtered].sort((a, b) => {
-      const messagesA = messages[a.id] || [];
-      const messagesB = messages[b.id] || [];
-      const lastMessageA = messagesA[messagesA.length - 1];
-      const lastMessageB = messagesB[messagesB.length - 1];
-      const timeA = lastMessageA ? new Date(lastMessageA.timestamp).getTime() : 0;
-      const timeB = lastMessageB ? new Date(lastMessageB.timestamp).getTime() : 0;
-
-      // Pinned contacts always have the highest priority
-      if (a.isPinned !== b.isPinned) {
-        return a.isPinned ? -1 : 1;
-      }
-
-      // Sort by most recent message time (descending)
-      if (timeA !== timeB) {
-        return timeB - timeA;
-      }
-
-      // If timestamps are the same, prioritize higher unread count
-      const unreadA = unreadCounts[a.id] || 0;
-      const unreadB = unreadCounts[b.id] || 0;
-      if (unreadA !== unreadB) {
-        return unreadB - unreadA;
-      }
-
-      // Fallback to alphabetical sorting for consistency
-      return a.name.localeCompare(b.name);
-    });
-  }, [contacts, searchTerm, messages, unreadCounts]);
-
-  const sidebarBg = theme === 'midnight' ? 'dark:bg-black' : 'dark:bg-slate-900';
+  const sidebarBg = theme === 'midnight' ? 'dark:bg-black' : 'dark:bg-background';
 
   return (
-    <aside style={style} className={`bg-slate-50 ${sidebarBg} flex flex-col flex-shrink-0`}>
+    <aside style={style} className={`bg-sidebar h-full border-sidebar-border flex flex-col flex-shrink-0 w-full sm:w-auto`}>
       <header className="p-4 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center flex-shrink-0">
         <div className="relative flex-1 min-w-0" ref={userMenuRef}>
             <button
@@ -126,18 +97,29 @@ const Sidebar: React.FC<SidebarProps> = ({ contacts, messages, unreadCounts, sel
             )}
         </div>
         <div className="flex items-center gap-1 ml-2">
-          <button onClick={onInviteUser} className="p-2 rounded-full text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors" aria-label="Invite user">
-            <UserPlusIcon className="w-6 h-6" />
-          </button>
-          <button onClick={onFriendRequests} className="p-2 rounded-full text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors" aria-label="Friend requests">
-            <UserIcon className="w-6 h-6" />
-          </button>
-          <button onClick={onNewGroup} className="p-2 rounded-full text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors" aria-label="New group">
-            <UsersIcon className="w-6 h-6" />
-          </button>
+          <Button onClick={onFriendRequests} variant="ghost" aria-label="Friend requests">
+            <IconBell className="w-6 h-6" />
+            {pendingFriendRequestsCount > 0 && (
+              <span className="absolute">
+                <Badge className="absolute -top-4 px-1 py-0 text-[10px] leading-none rounded-full" variant="destructive">
+                  {pendingFriendRequestsCount}
+                </Badge>
+              </span>
+            )}
+          </Button>
         </div>
       </header>
-      <div className="p-2 border-b border-slate-200 dark:border-slate-800">
+      <div className="p-2 border-b border-slate-200 dark:border-slate-800 space-y-2 sticky top-0 z-10 backdrop-blur supports-[backdrop-filter]:bg-slate-50/60 dark:supports-[backdrop-filter]:bg-slate-900/60">
+        <div className="flex justify-end">
+          <Button
+            onClick={onNewGroup}
+            className="w-full px-3 py-1.5 flex justify-center items-center cursor-pointer text-sm rounded-md bg-indigo-600 text-white hover:bg-indigo-500 transition-colors"
+            aria-label="Start a new chat"
+          >
+            <PlusIcon className="w-5 h-5 inline-block mr-1" />
+            New Chat
+          </Button>
+        </div>
         <div className="relative">
           <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
             <SearchIcon className="w-5 h-5 text-slate-500 dark:text-slate-400" />
@@ -162,9 +144,9 @@ const Sidebar: React.FC<SidebarProps> = ({ contacts, messages, unreadCounts, sel
         </div>
       </div>
       <div className="flex-1 overflow-y-auto">
-        {sortedContacts.length > 0 ? (
+        {filteredContacts.length > 0 ? (
           <ul>
-            {sortedContacts.map(contact => {
+            {filteredContacts.map(contact => {
               const contactMessages = messages[contact.id] || [];
               const lastMessage = contactMessages[contactMessages.length - 1];
               const isSelected = contact.id === selectedContactId;
@@ -194,7 +176,7 @@ const Sidebar: React.FC<SidebarProps> = ({ contacts, messages, unreadCounts, sel
                     </div>
                     <div className="flex-1 overflow-hidden">
                       <div className="flex items-center">
-                          {contact.isPinned && <PinIcon className="w-4 h-4 mr-1.5 text-indigo-500 flex-shrink-0" />}
+                          {contact.isPinned && <Pin fill={`${contact.isPinned ? 'currentColor' : 'none'}`} className="w-4 h-4 mr-1.5 text-indigo-500 flex-shrink-0" />}
                           <h2 className={`font-semibold truncate text-base ${isSelected ? 'text-indigo-700 dark:text-white' : 'text-slate-800 dark:text-slate-200'}`}>{contact.name}</h2>
                       </div>
                       <p className={`text-sm truncate flex-1 pt-1 ${isUnread ? 'font-bold text-slate-700 dark:text-slate-200' : 'text-slate-600 dark:text-slate-400'}`}>
@@ -229,16 +211,17 @@ const Sidebar: React.FC<SidebarProps> = ({ contacts, messages, unreadCounts, sel
                         )}
                     </div>
                   </button>
-                  <button
+                  <Button
+                    variant={"ghost"}
                       onClick={(e) => {
                           e.stopPropagation();
                           onTogglePin(contact.id);
                       }}
-                      className={`absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-full transition-opacity opacity-0 group-hover:opacity-100 focus:opacity-100 ${contact.isPinned ? 'bg-indigo-100 dark:bg-indigo-600/30' : 'hover:bg-slate-200 dark:hover:bg-slate-700'}`}
+                      className={`absolute right-2 bottom-2 p-1.5 rounded-xl transition-opacity opacity-0 group-hover:opacity-100 focus:opacity-100 dark:group-hover:bg-transparent}`}
                       aria-label={contact.isPinned ? 'Unpin contact' : 'Pin contact'}
                   >
-                      <PinIcon className={`w-5 h-5 ${contact.isPinned ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-500 dark:text-slate-400'}`} />
-                  </button>
+                      <Pin className={`w-5 h-5 ${contact.isPinned ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-500 dark:text-slate-400'}`}                       fill={contact.isPinned ? 'currentColor' : 'none'} />
+                  </Button>
                 </li>
               );
             })}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { UserCheck, UserX, Loader2 } from 'lucide-react';
+import { UserCheck, UserX, Loader2, X } from 'lucide-react';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
@@ -181,6 +181,17 @@ const FriendRequestsModal: React.FC<FriendRequestsModalProps> = ({
                         <div className="flex items-center space-x-2">
                           <Button
                             size="sm"
+                            variant="destructive"
+                            onClick={() => handleRejectRequest(request)}
+                            disabled={processingRequest === request.id}
+                          >
+                            <div className="flex items-center space-x-1">
+                              <UserX className="w-3 h-3" />
+                              <span>Reject</span>
+                            </div>
+                          </Button>
+                          <Button
+                            size="sm"
                             variant="default"
                             onClick={() => handleAcceptRequest(request)}
                             disabled={processingRequest === request.id}
@@ -188,16 +199,11 @@ const FriendRequestsModal: React.FC<FriendRequestsModalProps> = ({
                             {processingRequest === request.id ? (
                               <Loader2 className="w-3 h-3 animate-spin" />
                             ) : (
-                              <UserCheck className="w-3 h-3" />
+                              <div className="flex items-center space-x-1">
+                                <UserCheck className="w-3 h-3" />
+                                <span>Accept</span>
+                              </div>
                             )}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleRejectRequest(request)}
-                            disabled={processingRequest === request.id}
-                          >
-                            <UserX className="w-3 h-3" />
                           </Button>
                         </div>
                       </div>

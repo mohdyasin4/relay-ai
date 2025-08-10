@@ -9,7 +9,7 @@ import type { User, Message, Contact } from '../types';
 export class DatabaseService {
   /**
    * Get a user by ID
-   */
+   */ 
   static async getUserById(userId: string): Promise<User | null> {
     // In a browser environment, use Supabase API
     if (typeof window !== 'undefined') {
@@ -217,7 +217,7 @@ export class DatabaseService {
       const { error } = await supabase
         .from('User')
         .update(data)
-        .eq('id', userId);
+        .eq('id', userId)
       if (error) {
         console.error('Error updating user status:', error);
         return false;
