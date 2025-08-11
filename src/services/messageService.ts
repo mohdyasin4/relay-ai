@@ -658,7 +658,8 @@ export class MessageService {
   static async getLatestMessagesForContacts(
     userId: string,
     contacts: Contact[],
-    perContactLimit: number = 1
+    perContactLimit: number = 1,
+    options?: { sinceDays?: number }
   ): Promise<Record<string, Message[]>> {
     const supabase = createClient();
     try {
@@ -676,6 +677,12 @@ export class MessageService {
       const groupIds = contacts.filter(c => c.isGroup).map(c => c.id);
 
       const results: Message[] = [];
+      const sinceIso = (() => {
+        const days = options?.sinceDays ?? 90;
+        const d = new Date();
+        d.setDate(d.getDate() - days);
+        return d.toISOString();
+      })();
 
       // Fetch latest direct messages in a single query using OR with IN lists
       if (directContactIds.length > 0) {
@@ -691,7 +698,7 @@ export class MessageService {
           `and(senderId.eq.${userId},aiSenderId.in.(${idList}))`
         ].join(',');
 
-        const { data, error } = await supabase
+        let directQuery = supabase
           .from('Message')
           .select(`
             id,
@@ -717,8 +724,11 @@ export class MessageService {
           `)
           .is('groupId', null)
           .or(orClause)
+          .gte('timestamp', sinceIso)
           .order('timestamp', { ascending: false })
           .limit(Math.max(50, perContactLimit * directContactIds.length * 2));
+
+        const { data, error } = await directQuery;
 
         if (error) {
           console.error('Error fetching latest direct messages:', error);
@@ -757,7 +767,7 @@ export class MessageService {
 
       // Fetch latest group messages
       if (groupIds.length > 0) {
-        const { data, error } = await supabase
+        let groupQuery = supabase
           .from('Message')
           .select(`
             id,
@@ -782,8 +792,11 @@ export class MessageService {
             replyToSenderName
           `)
           .in('groupId', groupIds)
+          .gte('timestamp', sinceIso)
           .order('timestamp', { ascending: false })
           .limit(Math.max(50, perContactLimit * groupIds.length * 2));
+
+        const { data, error } = await groupQuery;
 
         if (error) {
           console.error('Error fetching latest group messages:', error);

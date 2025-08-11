@@ -1,4 +1,4 @@
-export type Theme = 'light' | 'dark' | 'midnight';
+export type Theme = 'light' | 'dark';
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
 

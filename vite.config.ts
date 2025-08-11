@@ -28,7 +28,8 @@ export default defineConfig(({ mode }) => {
         }
       },
       optimizeDeps: {
-        exclude: ['@prisma/client']
+        exclude: ['@prisma/client'],
+        include: ['use-stick-to-bottom'],
       },
       build: {
         rollupOptions: {

@@ -1,7 +1,8 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 // import { DatabaseService } from './services/databaseService';
 import { useSelectedContactWithLastSeen } from './hooks/useSelectedContactWithLastSeen';
-import Sidebar from './components/Sidebar';
+import AppSidebar from './components/AppSidebar';
+import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
 import ChatView from './components/ChatView';
 import SettingsModal from './components/SettingsModal';
 // import NewGroupModal from './components/NewGroupModal';
@@ -11,7 +12,7 @@ import Lightbox from './components/Lightbox';
 import ForwardMessageModal from './components/ForwardMessageModal';
 import InviteUserModal from './components/InviteUserModal';
 import FriendRequestsModal from './components/FriendRequestsModal';
-import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from './components/ui/resizable';
+// import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from './components/ui/resizable';
 import { generateUUID } from './utils/uuidUtils';
 import { sendMessageToBot } from './services/geminiService';
 import { FriendsService } from './services/friendsService';
@@ -22,18 +23,36 @@ import { useAuth } from './contexts/AuthContext';
 import type { Contact, Message, MessagesState, User, Attachment, Theme, MqttPayload, Invitation, ReadReceipt, DeliveryReceipt, TypingIndicatorPayload, ReactionPayload } from './types';
 import { AI_PERSONAS } from './constants';
 import { mqttService } from './services/mqttService';
-import { cn } from './lib/utils';
+import { useTheme } from './components/theme-provider';
+// import { cn } from './lib/utils';
 
 const App: React.FC = () => {
   console.log('App component rendering');
   const { user: authUser, logout } = useAuth(); // Access authenticated user and logout from AuthContext
   console.log('Auth user from context:', authUser);
   const [user, setUser] = useState<User | null>(authUser); // Initialize with auth user
-  const [theme, setTheme] = useLocalStorage<Theme>('theme', 'dark');
+  const { theme, setTheme } = useTheme();
+
   // Persistent sidebar width in px
   // Use default width unless user has resized
+  // Desktop sidebar width (resizable)
   const DEFAULT_SIDEBAR_WIDTH = 320;
   const [sidebarWidth, setSidebarWidth] = useLocalStorage<number>('sidebarWidth', DEFAULT_SIDEBAR_WIDTH);
+  const resizingRef = useRef<boolean>(false);
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!resizingRef.current) return;
+      const newWidth = Math.min(Math.max(e.clientX, 220), 600);
+      setSidebarWidth(newWidth);
+    };
+    const onUp = () => { resizingRef.current = false; };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [setSidebarWidth]);
   // Avoid local MQTT status state to prevent re-renders; use mqttService.isConnected()
 
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -41,6 +60,8 @@ const App: React.FC = () => {
   const [messages, setMessages] = useState<MessagesState>({});
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isContactsLoading, setIsContactsLoading] = useState<boolean>(true);
+  const [contactsError, setContactsError] = useState<string | null>(null);
   const [typingIndicators, setTypingIndicators] = useState<Record<string, Record<string, string>>>({});
   
   const [firstUnreadMessageId, setFirstUnreadMessageId] = useState<string | null>(null);
@@ -56,7 +77,7 @@ const App: React.FC = () => {
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [forwardingMessage, setForwardingMessage] = useState<Message | null>(null);
   
-  const isResizing = useRef(false);
+  // const isResizing = useRef(false);
 
   // --- Start of Quote Bot Proactive Messaging ---
   const contactsRef = useRef(contacts);
@@ -189,13 +210,34 @@ const App: React.FC = () => {
     }
   }, [authUser, setUser]);
 
-  // Removed eager load of all messages for sorting to cut down on API calls.
+  // On initial app load, fetch last 50 messages for each contact
+  useEffect(() => {
+    async function fetchInitialMessages() {
+      if (contacts.length === 0) return;
+      setIsLoading(true);
+      const allMessages: Record<string, Message[]> = {};
+      for (const contact of contacts) {
+        try {
+          // Use your preferred service (MessageService, DatabaseService, etc.)
+          const msgs = await import('./services/messageService').then(mod => mod.MessageService.getMessages(contact.id, contact.isGroup, 50));
+          allMessages[contact.id] = Array.isArray(msgs) ? msgs : [];
+        } catch (err) {
+          allMessages[contact.id] = [];
+        }
+      }
+      setMessages(allMessages);
+      setIsLoading(false);
+    }
+    fetchInitialMessages();
+  }, [contacts]);
 
   const loadContactsFromDatabase = useCallback(async () => {
     if (!user) return;
     
     console.log('Loading contacts from database for user:', user.id);
     try {
+      setIsContactsLoading(true);
+      setContactsError(null);
       // Load all contacts from database (including AI assistants)
       const allContacts = await FriendsService.getContacts(user.id);
       console.log('Contacts loaded from database:', allContacts);
@@ -209,13 +251,36 @@ const App: React.FC = () => {
         }
       });
       
+      // Prime latest messages BEFORE rendering contacts to ensure correct sort
+      try {
+        const latest = await MessageService.getLatestMessagesForContacts(user.id, allContacts, 1, { sinceDays: 90 });
+        setMessages(prev => {
+          const next = { ...prev };
+          for (const cid of Object.keys(latest)) {
+            const existing = next[cid] || [];
+            const incoming = latest[cid] || [];
+            const existingIds = new Set(existing.map(m => m.id));
+            const unique = incoming.filter(m => !existingIds.has(m.id));
+            if (unique.length > 0) {
+              next[cid] = [...existing, ...unique].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+            }
+          }
+          return next;
+        });
+      } catch (e) {
+        console.error('Priming latest messages failed (non-blocking):', e);
+      }
+
       setContacts(allContacts);
+      setIsContactsLoading(false);
       
       // Do not prefetch all messages; messages load lazily when opening a chat
     } catch (error) {
       console.error('Failed to load contacts from database:', error);
       // Fallback to empty contacts on error
       setContacts([]);
+      setContactsError('Failed to load contacts. Please try again.');
+      setIsContactsLoading(false);
     }
   }, [user]);
 
@@ -297,7 +362,7 @@ const App: React.FC = () => {
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme !== 'light');
-    document.documentElement.classList.toggle('midnight', theme === 'midnight');
+    document.documentElement.classList.toggle('midnight', (theme as any) === 'midnight');
     
     let bodyClass = '';
     if (theme === 'light') {
@@ -1296,96 +1361,59 @@ const App: React.FC = () => {
     return bLast - aLast;
   });
 
+
   return (
-   
+
 <>
-  <div className="h-screen w-screen flex flex-col font-sans antialiased text-slate-800 dark:text-slate-200 overflow-hidden">    <ResizablePanelGroup
-      direction="horizontal"
-      className="flex-1 h-full md:min-w-[450px] overflow-hidden"
-    >
-      {/* Sidebar Panel */}
-      <ResizablePanel
-        defaultSize={Math.round(((sidebarWidth ?? DEFAULT_SIDEBAR_WIDTH) / window.innerWidth) * 100)}
-        minSize={16}
-        maxSize={25}
-        onResize={(sizes: number | number[]) => {
-          // Only update localStorage if user actually resizes
-          let percent: number;
-          if (Array.isArray(sizes)) {
-            percent = sizes[0];
-          } else {
-            percent = sizes;
+  <SidebarProvider style={{"--sidebar-width": `${sidebarWidth}px`} as React.CSSProperties}>
+    <AppSidebar
+      contacts={sortedContacts}
+      messages={messages}
+      unreadCounts={unreadCounts}
+      selectedContactId={selectedContactId}
+      onSelectContact={handleSelectContact}
+      user={user}
+      onNewGroup={() => setNewChatOpen(true)}
+      onSettings={() => setSettingsOpen(true)}
+      onLogout={handleLogout}
+      onTogglePin={handleTogglePinContact}
+      onFriendRequests={() => setFriendRequestsOpen(true)}
+      typingIndicators={typingIndicators}
+      pendingFriendRequestsCount={pendingFriendRequests}
+      isLoading={isContactsLoading}
+      error={contactsError}
+      onRetry={loadContactsFromDatabase}
+    />
+    {/* Desktop-only resizer between sidebar and content */}
+    {/* <div
+      className="hidden w-1.5 cursor-col-resize bg-border md:block hover:bg-primary/40 transition-colors"
+      onMouseDown={() => { resizingRef.current = true; }}
+      aria-label="Resize sidebar"
+      role="separator"
+    /> */}
+    <SidebarInset className="h-screen shadow-lg border flex flex-1 overflow-hidden">
+        <ChatView
+          contact={selectedContact || undefined}
+          currentUser={user}
+          contacts={contacts}
+          messages={selectedContact ? messages[selectedContact.id] || [] : []}
+          isLoading={isLoading}
+          typingIndicators={
+            selectedContact ? typingIndicators[selectedContact.id] || {} : {}
           }
-          const newWidth = Math.round((percent / 100) * window.innerWidth);
-          if (!isNaN(newWidth) && newWidth > 0 && newWidth !== sidebarWidth) {
-            setSidebarWidth(newWidth);
-          }
-        }}
-        className="h-full overflow-hidden"
-      >
-        <Sidebar
-          theme={theme}
-          contacts={sortedContacts}
-          messages={messages}
-          unreadCounts={unreadCounts}
-          selectedContactId={selectedContactId}
-          onSelectContact={handleSelectContact}
-          user={user}
-          onNewGroup={() => setNewChatOpen(true)}
-          onSettings={() => setSettingsOpen(true)}
-          onLogout={handleLogout}
-          onTogglePin={handleTogglePinContact}
+          onSendMessage={handleSendMessage}
+          onImageClick={setLightboxImage}
+          onEditGroup={setEditingGroup}
+          onReact={handleReactToMessage}
+          onForward={setForwardingMessage}
+          onNewGroup={() => setNewGroupOpen(true)}
           onInviteUser={() => setInviteModalOpen(true)}
-          onFriendRequests={() => setFriendRequestsOpen(true)}
-          typingIndicators={typingIndicators}
-          pendingFriendRequestsCount={pendingFriendRequests}
-          style={{ width: `${sidebarWidth}px`, minWidth: `${sidebarWidth}px`, maxWidth: `${sidebarWidth}px` }}
+          onAddAiContact={handleAddAiContact}
+          aiPersonas={AI_PERSONAS}
+          firstUnreadMessageId={firstUnreadMessageId}
         />
-      </ResizablePanel>
-{/* Stylized Resizable Handle */}
-<div className="relative group h-full">
-  <ResizableHandle
-    withHandle
-    className={cn(
-      "opacity-0 group-hover:opacity-100 transition-opacity ease-in-out delay-200", // smooth delayed fade
-      "absolute top-0 bottom-0 left-1/2 -translate-x-1/2 z-10",
-      // Track style
-      "bg-transparent group-hover:bg-border dark:group-hover:bg-foreground/25",
-      // Hit area for easier grabbing
-      "before:absolute before:inset-y-0 before:-left-2 before:w-5 before:cursor-col-resize"
-    )}
-  />
-</div>
-
-
-      {/* Chat View Panel */}
-      <ResizablePanel defaultSize={75} className="h-full overflow-hidden">
-        <main className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
-          <ChatView
-            contact={selectedContact || undefined}
-            currentUser={user}
-            contacts={contacts}
-            messages={selectedContact ? messages[selectedContact.id] || [] : []}
-            isLoading={isLoading}
-            typingIndicators={
-              selectedContact ? typingIndicators[selectedContact.id] || {} : {}
-            }
-            onSendMessage={handleSendMessage}
-            onImageClick={setLightboxImage}
-            onEditGroup={setEditingGroup}
-            onReact={handleReactToMessage}
-            onForward={setForwardingMessage}
-            onNewGroup={() => setNewGroupOpen(true)}
-            onInviteUser={() => setInviteModalOpen(true)}
-            onAddAiContact={handleAddAiContact}
-            aiPersonas={AI_PERSONAS}
-            firstUnreadMessageId={firstUnreadMessageId}
-            className="flex flex-col h-full min-h-0"
-          />
-        </main>
-      </ResizablePanel>
-    </ResizablePanelGroup>
-  </div>
+    </SidebarInset>
+  </SidebarProvider>
 
   {/* Modals */}
   <SettingsModal
@@ -1393,7 +1421,7 @@ const App: React.FC = () => {
     onClose={() => setSettingsOpen(false)}
     user={user}
     onUserUpdate={setUser}
-    theme={theme}
+    theme={theme as Theme}
     onThemeChange={setTheme}
     aiPersonas={AI_PERSONAS}
     contacts={contacts}
