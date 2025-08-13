@@ -16,22 +16,42 @@ export interface DatabaseMessage {
 }
 
 export class MessageService {
-  // Simple in-memory caches to reduce duplicate network calls
-  private static messagesCache: Map<string, { data: Message[]; ts: number }> = new Map();
+  // Optimized in-memory caches with LRU eviction and better TTLs
+  private static messagesCache: Map<string, { data: Message[]; ts: number; hits: number }> = new Map();
   private static messagesInflight: Map<string, Promise<Message[]>> = new Map();
-  private static latestPerContactsCache: Map<string, { data: Record<string, Message[]>; ts: number }> = new Map();
+  private static latestPerContactsCache: Map<string, { data: Record<string, Message[]>; ts: number; hits: number }> = new Map();
   private static latestPerContactsInflight: Map<string, Promise<Record<string, Message[]>>> = new Map();
-  private static unreadCache: Map<string, { data: Record<string, Message[]>; ts: number }> = new Map();
+  private static unreadCache: Map<string, { data: Record<string, Message[]>; ts: number; hits: number }> = new Map();
   private static unreadInflight: Map<string, Promise<Record<string, Message[]>>> = new Map();
+
+  private static readonly MAX_CACHE_SIZE = 50; // Limit cache size to prevent memory issues
+  private static readonly DEFAULT_TTL = 30_000; // 30 seconds default TTL
+  private static readonly MESSAGES_TTL = 60_000; // 1 minute for messages
+  private static readonly LATEST_TTL = 45_000; // 45 seconds for latest messages
 
   private static isFresh(ts: number, ttlMs: number): boolean {
     return Date.now() - ts < ttlMs;
+  }
+
+  private static evictOldEntries<T extends { ts: number; hits: number }>(cache: Map<string, T>): void {
+    if (cache.size <= this.MAX_CACHE_SIZE) return;
+    
+    // Convert to array and sort by last access time and hit count
+    const entries = Array.from(cache.entries())
+      .sort((a, b) => (a[1].ts - b[1].ts) || (a[1].hits - b[1].hits))
+      .slice(0, cache.size - this.MAX_CACHE_SIZE + 10); // Remove extra entries
+    
+    entries.forEach(([key]) => cache.delete(key));
   }
 
   static clearCaches(): void {
     this.messagesCache.clear();
     this.latestPerContactsCache.clear();
     this.unreadCache.clear();
+    // Clear inflight requests too
+    this.messagesInflight.clear();
+    this.latestPerContactsInflight.clear();
+    this.unreadInflight.clear();
   }
   /**
    * Save a message to the database
@@ -155,9 +175,10 @@ export class MessageService {
       }
       const cacheKey = `${isGroup ? 'group' : 'dm'}:${currentUserId || 'na'}:${contactId}:${limit}`;
 
-      // Use cached value if fresh (TTL 15s)
+      // Use cached value if fresh with optimized TTL
       const cached = this.messagesCache.get(cacheKey);
-      if (cached && this.isFresh(cached.ts, 15_000)) {
+      if (cached && this.isFresh(cached.ts, this.MESSAGES_TTL)) {
+        cached.hits += 1; // Track cache hits for better eviction
         return cached.data;
       }
       const inflight = this.messagesInflight.get(cacheKey);
@@ -214,8 +235,9 @@ export class MessageService {
           return [] as Message[];
         }
         if (!messages || messages.length === 0) {
-          this.messagesCache.set(cacheKey, { data: [], ts: Date.now() });
-          return [] as Message[];
+        this.evictOldEntries(this.messagesCache);
+        this.messagesCache.set(cacheKey, { data: [], ts: Date.now(), hits: 1 });
+        return [] as Message[];
         }
 
         // Fetch reactions for all messages
@@ -269,7 +291,8 @@ export class MessageService {
           })
         }));
 
-        this.messagesCache.set(cacheKey, { data: mapped, ts: Date.now() });
+        this.evictOldEntries(this.messagesCache);
+        this.messagesCache.set(cacheKey, { data: mapped, ts: Date.now(), hits: 1 });
         return mapped;
       } finally {
         this.messagesInflight.delete(cacheKey);
@@ -488,7 +511,8 @@ export class MessageService {
     try {
       const cacheKey = `unread:${userId}:${lastSeenISO || 'none'}`;
       const cached = this.unreadCache.get(cacheKey);
-      if (cached && this.isFresh(cached.ts, 10_000)) {
+      if (cached && this.isFresh(cached.ts, this.DEFAULT_TTL)) {
+        cached.hits += 1;
         return cached.data;
       }
       const inflight = this.unreadInflight.get(cacheKey);
@@ -631,7 +655,8 @@ export class MessageService {
         });
       });
 
-          this.unreadCache.set(cacheKey, { data: unreadMessages, ts: Date.now() });
+          this.evictOldEntries(this.unreadCache);
+          this.unreadCache.set(cacheKey, { data: unreadMessages, ts: Date.now(), hits: 1 });
           return unreadMessages;
         } catch (error) {
           console.error('Error fetching unread messages:', error);
@@ -665,7 +690,8 @@ export class MessageService {
     try {
       const cacheKey = `latest:${userId}:${contacts.length}:${perContactLimit}`;
       const cached = this.latestPerContactsCache.get(cacheKey);
-      if (cached && this.isFresh(cached.ts, 15_000)) {
+      if (cached && this.isFresh(cached.ts, this.LATEST_TTL)) {
+        cached.hits += 1;
         return cached.data;
       }
       const inflight = this.latestPerContactsInflight.get(cacheKey);
@@ -850,7 +876,8 @@ export class MessageService {
       // Ensure ascending order within each contact bucket
       Object.values(latestByContact).forEach(arr => arr.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()));
 
-      this.latestPerContactsCache.set(cacheKey, { data: latestByContact, ts: Date.now() });
+      this.evictOldEntries(this.latestPerContactsCache);
+      this.latestPerContactsCache.set(cacheKey, { data: latestByContact, ts: Date.now(), hits: 1 });
       return latestByContact;
     } catch (error) {
       console.error('Error fetching latest messages for contacts:', error);

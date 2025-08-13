@@ -18,7 +18,7 @@ class MqttService {
     private connectionStatus: 'disconnected' | 'connecting' | 'connected' | 'error' = 'disconnected';
     private lastPresenceStatus: 'online' | 'offline' | null = null;
     private lastPresenceUpdateAt: number = 0;
-    private readonly presenceUpdateThrottleMs: number = 5 * 60 * 1000; // 5 minutes
+    private readonly presenceUpdateThrottleMs: number = 2 * 60 * 1000; // 2 minutes - reduced for better responsiveness
 
     // Use environment variable or fallback to default broker URL
     private brokerUrl = import.meta.env.VITE_MQTT_BROKER_URL || 'wss://test.buildtrack.in/mqtt';
@@ -28,8 +28,9 @@ class MqttService {
         password: import.meta.env.VITE_MQTT_PASSWORD || 'btmqtt123',
         reconnectPeriod: 5000, // Increase reconnect period to 5 seconds
         connectTimeout: 10000, // Increase timeout to 10 seconds
-        keepalive: 60, // Keep connection alive with pings
+        keepalive: 45, // Optimized keep-alive interval
         rejectUnauthorized: false, // Bypass SSL certificate validation issues (consider true for production)
+        clean: false, // Resume existing session for better performance
     };
 
     public isConnected(): boolean {
@@ -568,7 +569,7 @@ class MqttService {
                 // Stop heartbeat if client is no longer connected
                 this.stopHeartbeat();
             }
-        }, 60000); // Update every minute
+        }, 90000); // Update every 90 seconds - optimized interval
     }
 
     /**

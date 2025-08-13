@@ -104,6 +104,10 @@ export type CodeBlockHeaderProps = {
 }
 
 function CodeBlockHeader({ language, filename, rightSlot, handleCopy, copied, setCopied, className }: CodeBlockHeaderProps) {
+useEffect(() => {
+  console.log("Copied status changed:", copied);
+}, [copied]);
+
   return (
     <div className={cn("border-border border-b py-2 pr-2 pl-4 flex items-center justify-between", className)}>
       <div className="flex items-center gap-2">
@@ -120,7 +124,7 @@ function CodeBlockHeader({ language, filename, rightSlot, handleCopy, copied, se
         className="h-8 w-8"
         onClick={handleCopy}
       >
-        {copied ? (
+        {copied == true ? (
           <Check className="h-4 w-4 text-green-500" />
         ) : (
           <Copy className="h-4 w-4" />

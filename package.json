@@ -47,6 +47,7 @@
     "@testing-library/react": "^16.3.0",
     "@types/moment": "^2.11.29",
     "@types/react-router-dom": "^5.3.3",
+    "@use-gesture/react": "^10.3.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
@@ -70,6 +71,7 @@
     "react-markdown": "^10.1.0",
     "react-resizable-panels": "^3.0.3",
     "react-router-dom": "^7.7.1",
+    "react-web-notification": "^0.8.0",
     "recharts": "^2.15.4",
     "remark-breaks": "^4.0.0",
     "remark-gfm": "^4.0.1",
@@ -77,6 +79,7 @@
     "sonner": "^2.0.6",
     "tailwind-merge": "^3.3.1",
     "tailwindcss": "^4.1.11",
+    "use-long-press": "^3.3.0",
     "use-stick-to-bottom": "^1.1.1",
     "vaul": "^1.1.2",
     "zod": "^4.0.10"

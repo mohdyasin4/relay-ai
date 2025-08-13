@@ -14,7 +14,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import GeneratedAvatar from './GeneratedAvatar';
 import { NavUser } from './NavUser';
-import { Pin, PlusIcon } from 'lucide-react';
+import { Pin, PlusIcon, X } from 'lucide-react';
 import SearchIcon from './icons/SearchIcon';
 import CloseIcon from './icons/CloseIcon';
 // import TypingIndicator from './icons/TypingIndicator';
@@ -38,6 +38,7 @@ interface AppSidebarProps extends React.ComponentProps<typeof ShSidebar> {
   isLoading?: boolean;
   error?: string | null;
   onRetry?: () => void;
+  onClose?: () => void;
 }
 
 export const AppSidebar: React.FC<AppSidebarProps> = ({
@@ -57,6 +58,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
   isLoading = false,
   error = null,
   onRetry,
+  onClose,
   ...sidebarProps
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -77,19 +79,34 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
   }, [contacts, searchTerm]);
 
   return (
-    <ShSidebar collapsible="offcanvas" variant="sidebar" {...sidebarProps}>
+    <ShSidebar collapsible="offcanvas" variant="sidebar" className="md:relative sidebar-mobile-full" {...sidebarProps}>
       <SidebarHeader>
-        <NavUser
-          user={{ name: user.name, email: user.email, avatar: user.avatarUrl || '' }}
-          onSettings={onSettings}
-          onLogout={onLogout}
-          onNotifications={onFriendRequests}
-          pendingNotifications={pendingFriendRequestsCount}
-        />
+        <div className="flex items-center justify-between px-2">
+          <NavUser
+            user={{ name: user.name, email: user.email, avatar: user.avatarUrl || '' }}
+            onSettings={onSettings}
+            onLogout={onLogout}
+            onNotifications={onFriendRequests}
+            pendingNotifications={pendingFriendRequestsCount}
+            isMobile={false}
+            showOnlineStatus={true}
+          />
+          {onClose && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onClose}
+              className="md:hidden"
+              aria-label="Close sidebar"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
         <SidebarMenu>
           <SidebarMenuItem>
             <div className="px-2 pt-2">
-              <Button onClick={onNewGroup} className="w-full" aria-label="Start a new chat">
+              <Button onClick={onNewGroup} className="w-full hidden md:flex" aria-label="Start a new chat">
                 <PlusIcon className="w-5 h-5 inline-block mr-1" />
                 New Chat
               </Button>
@@ -169,6 +186,8 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
                           creatorId={contact.creatorId}
                           allContacts={contacts}
                           currentUser={user}
+                          showOnlineStatus={!contact.isGroup}
+                          onlineStatus={contact.isAi ? 'online' : 'online'}
                         />
                       </div>
                       <div className="flex-1 overflow-hidden">

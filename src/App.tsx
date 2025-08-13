@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect, useRef } from 'react';
 // import { DatabaseService } from './services/databaseService';
 import { useSelectedContactWithLastSeen } from './hooks/useSelectedContactWithLastSeen';
 import AppSidebar from './components/AppSidebar';
+import MobileSidebar from './components/MobileSidebar';
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
 import ChatView from './components/ChatView';
 import SettingsModal from './components/SettingsModal';
@@ -24,6 +25,9 @@ import type { Contact, Message, MessagesState, User, Attachment, Theme, MqttPayl
 import { AI_PERSONAS } from './constants';
 import { mqttService } from './services/mqttService';
 import { useTheme } from './components/theme-provider';
+import { Button } from './components/ui/button';
+import { PlusIcon } from 'lucide-react';
+import { AnimatePresence, motion } from 'motion/react';
 // import { cn } from './lib/utils';
 
 const App: React.FC = () => {
@@ -377,6 +381,28 @@ const App: React.FC = () => {
 
   const handleMqttPayload = useCallback(async (payload: MqttPayload, topic: string) => {
     console.log('Received MQTT Payload:', payload, 'on topic:', topic);
+
+    // Handle user status updates
+    if (topic.includes('/status') && (payload as any).status) {
+      const userId = topic.split('/')[1]; // Extract user ID from topic like "user/123/status"
+      const statusPayload = payload as unknown as { status: 'online' | 'offline' | 'away'; timestamp?: string };
+      if (userId && userId !== user?.id) {
+        setContacts(prevContacts => {
+          const contact = prevContacts.find(c => c.id === userId);
+          if (contact && !contact.isAi) {
+            return prevContacts.map(c => 
+              c.id === userId ? { 
+                ...c, 
+                status: statusPayload.status,
+                lastSeen: statusPayload.status === 'offline' ? new Date().toISOString() : c.lastSeen
+              } : c
+            );
+          }
+          return prevContacts;
+        });
+      }
+      return; // Don't process status updates as regular messages
+    }
 
     // --- Unified Presence Update ---
     const getSenderId = (p: MqttPayload): string | undefined => {
@@ -732,6 +758,10 @@ const App: React.FC = () => {
     contacts.forEach(contact => {
       const topic = contact.isGroup ? `chat/${contact.id}` : (contact.topicId || `chat/${[user.id, contact.id].sort().join('-')}`);
       topics.add(topic);
+      // Subscribe to user status updates for non-AI contacts
+      if (!contact.isAi) {
+        topics.add(`user/${contact.id}/status`);
+      }
     });
 
     // Subscribe to new topics
@@ -769,6 +799,9 @@ const App: React.FC = () => {
 
   const handleSelectContact = useCallback(async (contactId: string) => {
     setSelectedContactId(contactId);
+    
+    // Clear any active AI stream when switching contacts
+    setUiAiStream(null);
     
     // Load messages from database for this contact
     const contact = contacts.find(c => c.id === contactId);
@@ -852,7 +885,7 @@ const App: React.FC = () => {
         type: 'chat',
         id: aiMessageId,
         contactId: userMessage.contactId, // group ID or direct chat ID
-        text: '',
+      text: '',
         senderId: aiContact.id,
         senderName: aiContact.name,
         timestamp: new Date(),
@@ -888,14 +921,8 @@ const App: React.FC = () => {
 
         let fullResponse = '';
         for await (const chunk of stream) {
-            fullResponse += chunk.text;
-            setMessages(prev => {
-                const currentMessages = prev[userMessage.contactId] || [];
-                const updatedMessages = currentMessages.map(msg =>
-                    msg.id === aiMessageId ? { ...msg, text: fullResponse, timestamp: new Date() } : msg
-                );
-                return { ...prev, [userMessage.contactId]: updatedMessages };
-            });
+            const piece = (typeof chunk === 'string') ? chunk : (chunk?.text ?? '');
+            fullResponse += piece;
         }
 
         // Save the final AI response to database and broadcast to other users
@@ -922,6 +949,20 @@ const App: React.FC = () => {
                     mqttService.publish(topic, finalAiMessage);
                     console.log('AI group response broadcasted via MQTT');
                 }
+                
+                // Kick off UI streaming first, then update message text after a small delay
+                setUiAiStream({ contactId: userMessage.contactId, messageId: aiMessageId, text: finalAiMessage.text });
+                
+                // Update the message in state with the final text after streaming starts
+                setTimeout(() => {
+                    setMessages(prev => {
+                        const currentMessages = prev[userMessage.contactId] || [];
+                        const updatedMessages = currentMessages.map(msg =>
+                            msg.id === aiMessageId ? { ...msg, text: finalAiMessage.text } : msg
+                        );
+                        return { ...prev, [userMessage.contactId]: updatedMessages };
+                    });
+                }, 100);
             } catch (error) {
                 console.error('Failed to save AI response to database:', error);
             }
@@ -1362,39 +1403,63 @@ const App: React.FC = () => {
   });
 
 
-  return (
-
-<>
-  <SidebarProvider style={{"--sidebar-width": `${sidebarWidth}px`} as React.CSSProperties}>
-    <AppSidebar
-      contacts={sortedContacts}
-      messages={messages}
-      unreadCounts={unreadCounts}
-      selectedContactId={selectedContactId}
-      onSelectContact={handleSelectContact}
-      user={user}
-      onNewGroup={() => setNewChatOpen(true)}
-      onSettings={() => setSettingsOpen(true)}
-      onLogout={handleLogout}
-      onTogglePin={handleTogglePinContact}
-      onFriendRequests={() => setFriendRequestsOpen(true)}
-      typingIndicators={typingIndicators}
-      pendingFriendRequestsCount={pendingFriendRequests}
-      isLoading={isContactsLoading}
-      error={contactsError}
-      onRetry={loadContactsFromDatabase}
-    />
-    {/* Desktop-only resizer between sidebar and content */}
-    {/* <div
-      className="hidden w-1.5 cursor-col-resize bg-border md:block hover:bg-primary/40 transition-colors"
-      onMouseDown={() => { resizingRef.current = true; }}
-      aria-label="Resize sidebar"
-      role="separator"
-    /> */}
-    <SidebarInset className="h-screen shadow-lg border flex flex-1 overflow-hidden">
+  // UI stream state for streaming AI typewriter in ChatView
+  const [uiAiStream, setUiAiStream] = useState<{ contactId: string; messageId: string; text?: string; stream?: AsyncIterable<string> } | null>(null);
+    return (
+    <>{/* Mobile Layout (Motion / motion.dev slide in/out) */}
+<div className="md:hidden relative w-full h-screen overflow-hidden">
+  <AnimatePresence initial={false} mode="popLayout">
+    {!selectedContact ? (
+      <motion.div
+        key="mobile-sidebar"
+        initial={{ x: 0, opacity: 1 }}
+        animate={{ x: 0, opacity: 1 }}
+        exit={{ x: "-100%", opacity: 0 }}
+        transition={{ type: "spring", stiffness: 300, damping: 30 }}
+        className="absolute inset-0 w-full h-full z-20"
+      >
+        <MobileSidebar
+          contacts={sortedContacts}
+          messages={messages}
+          unreadCounts={unreadCounts}
+          selectedContactId={selectedContactId}
+          onSelectContact={handleSelectContact}
+          user={user}
+          onNewGroup={() => setNewChatOpen(true)}
+          onSettings={() => setSettingsOpen(true)}
+          onLogout={handleLogout}
+          onTogglePin={handleTogglePinContact}
+          onFriendRequests={() => setFriendRequestsOpen(true)}
+          typingIndicators={typingIndicators}
+          pendingFriendRequestsCount={pendingFriendRequests}
+          onClose={() => {
+            // Handle mobile sidebar close
+          }}
+        />
+      </motion.div>
+    ) : (
+      <motion.div
+        key="mobile-chat"
+        initial={{ x: "100%", opacity: 0 }}
+        animate={{ x: 0, opacity: 1 }}
+        exit={{ x: "100%", opacity: 0 }}
+        transition={{ type: "spring", stiffness: 300, damping: 30 }}
+        className="absolute inset-0 w-full h-full z-30"
+      >
         <ChatView
-          contact={selectedContact || undefined}
+          contact={selectedContact}
           currentUser={user}
+          aiStream={
+            selectedContact &&
+            uiAiStream &&
+            uiAiStream.contactId === selectedContact.id
+              ? {
+                  messageId: uiAiStream.messageId,
+                  stream: uiAiStream.stream,
+                  text: uiAiStream.text,
+                }
+              : null
+          }
           contacts={contacts}
           messages={selectedContact ? messages[selectedContact.id] || [] : []}
           isLoading={isLoading}
@@ -1411,62 +1476,136 @@ const App: React.FC = () => {
           onAddAiContact={handleAddAiContact}
           aiPersonas={AI_PERSONAS}
           firstUnreadMessageId={firstUnreadMessageId}
+          onBack={() => setSelectedContactId(null)}
         />
-    </SidebarInset>
-  </SidebarProvider>
+      </motion.div>
+    )}
+  </AnimatePresence>
+</div>
 
-  {/* Modals */}
-  <SettingsModal
-    isOpen={isSettingsOpen}
-    onClose={() => setSettingsOpen(false)}
-    user={user}
-    onUserUpdate={setUser}
-    theme={theme as Theme}
-    onThemeChange={setTheme}
-    aiPersonas={AI_PERSONAS}
-    contacts={contacts}
-    onToggleAiContact={handleToggleAiContact}
-  />
-  <NewChatDialog
-    isOpen={isNewChatOpen}
-    onClose={() => setNewChatOpen(false)}
-    currentUser={user!}
-    contacts={contacts}
-    aiPersonas={AI_PERSONAS}
-    onCreateGroup={handleCreateGroup}
-  />
-  <EditGroupModal
-    isOpen={!!editingGroup}
-    onClose={() => setEditingGroup(null)}
-    group={editingGroup}
-    contacts={contacts.filter((c) => !c.isGroup && !c.isAi)}
-    aiPersonas={AI_PERSONAS}
-    onUpdateGroup={handleUpdateGroup}
-  />
-  <InviteUserModal
-    isOpen={isInviteModalOpen}
-    onClose={() => setInviteModalOpen(false)}
-    currentUser={user!}
-  />
-  <FriendRequestsModal
-    isOpen={isFriendRequestsOpen}
-    onClose={() => setFriendRequestsOpen(false)}
-    currentUser={user!}
-    onRequestAccepted={handleFriendRequestAccepted}
-  />
-  <ForwardMessageModal
-    isOpen={!!forwardingMessage}
-    onClose={() => setForwardingMessage(null)}
-    contacts={contacts}
-    onForward={handleForwardMessage}
-    currentUser={user}
-    message={forwardingMessage || undefined}
-  />
-  {lightboxImage && (
-    <Lightbox src={lightboxImage} onClose={() => setLightboxImage(null)} />
-  )}
-</>
+      {/* Desktop Layout */}
+      <div className="hidden md:flex h-screen">
+        <SidebarProvider
+          style={{ "--sidebar-width": `${sidebarWidth}px` } as React.CSSProperties}
+        >
+        <AppSidebar
+          contacts={sortedContacts}
+          messages={messages}
+          unreadCounts={unreadCounts}
+          selectedContactId={selectedContactId}
+          onSelectContact={handleSelectContact}
+          user={user}
+          onNewGroup={() => setNewChatOpen(true)}
+          onSettings={() => setSettingsOpen(true)}
+          onLogout={handleLogout}
+          onTogglePin={handleTogglePinContact}
+          onFriendRequests={() => setFriendRequestsOpen(true)}
+          typingIndicators={typingIndicators}
+          pendingFriendRequestsCount={pendingFriendRequests}
+          isLoading={isContactsLoading}
+          error={contactsError}
+          onRetry={loadContactsFromDatabase}
+          onClose={() => {
+            // Handled by sidebar's built-in close functionality
+          }}
+        />
+  
+        <SidebarInset className="h-screen shadow-lg border flex flex-1 overflow-hidden">
+          <ChatView
+            contact={selectedContact || undefined}
+            currentUser={user}
+            aiStream={
+              selectedContact &&
+              uiAiStream &&
+              uiAiStream.contactId === selectedContact.id
+                ? {
+                    messageId: uiAiStream.messageId,
+                    stream: uiAiStream.stream,
+                    text: uiAiStream.text,
+                  }
+                : null
+            }
+            contacts={contacts}
+            messages={selectedContact ? messages[selectedContact.id] || [] : []}
+            isLoading={isLoading}
+            typingIndicators={
+              selectedContact ? typingIndicators[selectedContact.id] || {} : {}
+            }
+            onSendMessage={handleSendMessage}
+            onImageClick={setLightboxImage}
+            onEditGroup={setEditingGroup}
+            onReact={handleReactToMessage}
+            onForward={setForwardingMessage}
+            onNewGroup={() => setNewGroupOpen(true)}
+            onInviteUser={() => setInviteModalOpen(true)}
+            onAddAiContact={handleAddAiContact}
+            aiPersonas={AI_PERSONAS}
+            firstUnreadMessageId={firstUnreadMessageId}
+          />
+        </SidebarInset>
+        </SidebarProvider>
+      </div>
+  
+      {/* Modals */}
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        user={user}
+        onUserUpdate={setUser}
+        theme={theme as Theme}
+        onThemeChange={setTheme}
+        aiPersonas={AI_PERSONAS}
+        contacts={contacts}
+        onToggleAiContact={handleToggleAiContact}
+      />
+  
+      <NewChatDialog
+        isOpen={isNewChatOpen}
+        onClose={() => setNewChatOpen(false)}
+        currentUser={user!}
+        contacts={contacts}
+        aiPersonas={AI_PERSONAS}
+        onCreateGroup={handleCreateGroup}
+      />
+  
+      <EditGroupModal
+        isOpen={!!editingGroup}
+        onClose={() => setEditingGroup(null)}
+        group={editingGroup}
+        contacts={contacts.filter((c) => !c.isGroup && !c.isAi)}
+        aiPersonas={AI_PERSONAS}
+        onUpdateGroup={handleUpdateGroup}
+      />
+  
+      <InviteUserModal
+        isOpen={isInviteModalOpen}
+        onClose={() => setInviteModalOpen(false)}
+        currentUser={user!}
+      />
+  
+      <FriendRequestsModal
+        isOpen={isFriendRequestsOpen}
+        onClose={() => setFriendRequestsOpen(false)}
+        currentUser={user!}
+        onRequestAccepted={handleFriendRequestAccepted}
+      />
+  
+      <ForwardMessageModal
+        isOpen={!!forwardingMessage}
+        onClose={() => setForwardingMessage(null)}
+        contacts={contacts}
+        onForward={handleForwardMessage}
+        currentUser={user}
+        message={forwardingMessage || undefined}
+      />
+  
+      {lightboxImage && (
+        <Lightbox src={lightboxImage} onClose={() => setLightboxImage(null)} />
+      )}
+  
+
+    </>
   );
-};
+}
 
 export default App;

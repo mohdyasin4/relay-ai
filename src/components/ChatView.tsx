@@ -8,7 +8,9 @@ import React, {
   useMemo,
   useCallback,
   useLayoutEffect,
+  memo,
 } from "react";
+import { useLongPress } from "use-long-press";
 
 import { DatabaseService } from "../services/databaseService";
 import { mqttService } from "../services/mqttService";
@@ -24,7 +26,7 @@ import CloseIcon from "./icons/CloseIcon";
 import PlusIcon from "./icons/PlusIcon";
 import CheckIcon from "./icons/CheckIcon";
 import ReplyIcon from "./icons/ReplyIcon";
-import ChatBubbleLeftRightIcon from "./icons/ChatBubbleLeftRightIcon";
+// import ChatBubbleLeftRightIcon from "./icons/ChatBubbleLeftRightIcon";
 
 import type {
   Contact,
@@ -67,15 +69,17 @@ import {
   Edit,
   Send,
   MessagesSquare,
+  Copy,
+  ArrowLeft,
 } from "lucide-react";
 import { Paperclip } from "lucide-react";
-import EmojiPicker from "./EmojiPicker";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
-import EmojiPickerReact from "emoji-picker-react";
+import EmojiPickerReact, { EmojiStyle, SuggestionMode } from "emoji-picker-react";
 import { useTheme } from "./theme-provider";
 import { ScrollButton } from "./ui/scroll-button";
 import { Mention, MentionContent, MentionInput, MentionItem } from "@/components/ui/mention";
 import { Theme as EmojiTheme } from "emoji-picker-react";
+import { useTextStream } from "@/components/ui/response-stream";
 //
 
 interface ChatViewProps {
@@ -99,13 +103,27 @@ interface ChatViewProps {
   onAddAiContact: (contact: Contact) => void;
   aiPersonas: Contact[];
   firstUnreadMessageId: string | null;
+  aiStream?: { messageId: string; stream?: AsyncIterable<string>; text?: string } | null;
+  onBack?: () => void;
 }
 
 // Legacy SuggestionState retained only for reference; DiceUI Mention manages state internally
 
 // legacy typing indicator removed in favor of Loader typing
 
-const ChatView: React.FC<ChatViewProps> = ({
+// Memoize expensive message processing
+const MemoizedMessageContent = memo(MessageContent, (prevProps, nextProps) => {
+  return (
+    prevProps.children === nextProps.children &&
+    prevProps.className === nextProps.className &&
+    prevProps.copied === nextProps.copied &&
+    prevProps.theme === nextProps.theme
+  );
+});
+
+MemoizedMessageContent.displayName = 'MemoizedMessageContent';
+
+const ChatView: React.FC<ChatViewProps> = memo(({
   contact,
   currentUser,
   contacts,
@@ -122,15 +140,76 @@ const ChatView: React.FC<ChatViewProps> = ({
   onAddAiContact,
   aiPersonas,
   firstUnreadMessageId,
+  aiStream,
+  onBack,
 }) => {
   const [liveContact, setLiveContact] = useState<Contact | undefined>(contact);
   const [inputText, setInputText] = useState("");
   const [attachment, setAttachment] = useState<Attachment | null>(null);
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
-  const [openEmojiForMessageId, setOpenEmojiForMessageId] = useState<
-    string | null
-  >(null);
+  // Deprecated local per-message popover state
+  // const [openEmojiForMessageId, setOpenEmojiForMessageId] = useState<string | null>(null);
   const [isComposerEmojiOpen, setComposerEmojiOpen] = useState<boolean>(false);
+  // Clear mentions by remounting the mention input
+  const [mentionResetKey, setMentionResetKey] = useState(0);
+  const [openEmojiForMessageId, setOpenEmojiForMessageId] = useState<string | null>(null);
+  const [mobileMessageActions, setMobileMessageActions] = useState<{ messageId: string; x: number; y: number } | null>(null);
+
+  // Viewport dimensions for mobile popover positioning
+  const [viewportDimensions, setViewportDimensions] = useState<{ width: number; height: number }>(() => ({
+    width: typeof window !== 'undefined' ? window.innerWidth : 0,
+    height: typeof window !== 'undefined' ? window.innerHeight : 0
+  }));
+
+  // Handle click outside and viewport changes
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (isComposerEmojiOpen) {
+        const target = event.target as Element;
+        if (!target.closest('.emoji-picker-container') && !target.closest('[data-emoji-trigger]')) {
+          setComposerEmojiOpen(false);
+        }
+      }
+      if (mobileMessageActions) {
+        const target = event.target as Element;
+        if (!target.closest('.mobile-message-actions')) {
+          setMobileMessageActions(null);
+        }
+      }
+    };
+
+    const handleResize = () => {
+      setViewportDimensions({
+        width: window.innerWidth,
+        height: window.innerHeight
+      });
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    window.addEventListener('resize', handleResize);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      window.removeEventListener('resize', handleResize);
+    };
+  }, [isComposerEmojiOpen, mobileMessageActions]);
+
+  // Stream only the latest AI message if aiStream is provided
+  const {
+    displayedText: aiDisplayedText,
+    startStreaming: startAiStreaming,
+    reset: resetAiStreaming,
+  } = useTextStream({ 
+    textStream: aiStream?.stream || aiStream?.text || "", 
+    mode: "typewriter", 
+    speed: 350,
+  });
+
+  useEffect(() => {
+    if (aiStream && (aiStream.stream || aiStream.text)) {
+      resetAiStreaming();
+      startAiStreaming();
+    }
+  }, [aiStream?.messageId, aiStream?.stream, aiStream?.text, resetAiStreaming, startAiStreaming]);
   // Removed legacy suggestion state (DiceUI Mention handles suggestions)
   const [copied, setCopied] = useState(false);
   
@@ -161,13 +240,24 @@ const ChatView: React.FC<ChatViewProps> = ({
   // Replace @Name occurrences with markdown links that encode the user id or name
   let renderMessageWithMentions = (text: string): string => text;
   const escapeRegExp = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const handleCopy = (code: string) => {
+  navigator.clipboard.writeText(code);
+  setCopied(true);
+  console.log("Code copied to clipboard:", code);
 
-  const handleCopy = (code: string) => {
-    navigator.clipboard.writeText(code);
-    setCopied(true);
-    console.log("Code copied to clipboard:", code);
-    setTimeout(() => setCopied(false), 2000);
+  // The console.log below will still show old state
+  // because setCopied(true) is async.
   };
+
+
+useEffect(() => {
+  if (copied) {
+    console.log("Copied status changed to:", copied);
+    const timer = setTimeout(() => setCopied(false), 2000);
+    return () => clearTimeout(timer);
+  }
+}, [copied]);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // Using PromptInputTextarea internal ref; no local textarea ref needed
@@ -467,6 +557,8 @@ useLayoutEffect(() => {
       setInputText("");
       setAttachment(null);
       setReplyingTo(null);
+      // Force DiceUI Mention to reset any previous tags
+      setMentionResetKey((k) => k + 1);
     }
   };
 
@@ -483,7 +575,7 @@ useLayoutEffect(() => {
   >
     {/* Icon Header */}
     <div className="inline-flex p-5 bg-primary/10 rounded-3xl mb-6 shadow-sm">
-      <MessagesSquare className="w-14 h-14 text-primary" />
+      <MessagesSquare className="w-14 h-14 text-white" />
     </div>
 
     {/* Welcome Title */}
@@ -613,11 +705,19 @@ useLayoutEffect(() => {
   };
 
   return (
-    <div className="flex h-full flex-col overflow-hidden bg-background">
+    <div className="flex h-full flex-col bg-background">
       <header className="p-3 md:p-4 border-b flex items-center gap-3 bg-background/80 backdrop-blur-sm z-10">
-        <div className="md:">
-          <SidebarTrigger />
-        </div>
+       {onBack && 
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onBack}
+            className="md:hidden"
+            aria-label="Back to messages"
+          >
+            <ArrowLeft />
+          </Button>
+       }
         <GeneratedAvatar 
             name={liveContact?.name || contact.name} 
             isGroup={liveContact?.isGroup ?? contact.isGroup} 
@@ -645,7 +745,7 @@ useLayoutEffect(() => {
       </header>
       <div className="flex h-screen flex-col overflow-hidden">
         <ChatContainerRoot className="flex-1 space-y-0">
-          <ChatContainerContent className="space-y-4 px-6 py-28">
+           <ChatContainerContent className="space-y-4 px-6 py-32">
           {messagesWithDates.map((item) => {
               if ("type" in item && item.type === "date_marker") {
                 return (
@@ -687,7 +787,7 @@ useLayoutEffect(() => {
                     );
                   case "read":
                     return (
-                      <CheckCheck className="w-3.5 h-3.5 text-green-500" />
+                      <CheckCheck className="w-3.5 h-3.5 text-emerald-500" />
                     );
                   default:
                     return <Check className={`w-3.5 h-3.5 ${base}`} />;
@@ -728,7 +828,62 @@ useLayoutEffect(() => {
                             onClick={() => onImageClick(msg.attachment!.url)}
                           />
                         )}
-                         <div className="relative">
+                          <div
+                            className="relative"
+                            onPointerDown={(e) => {
+                              // Long press for mobile: only on touch/pointer devices or small screens
+                              if (window.innerWidth >= 768) return;
+                              const target = e.currentTarget as HTMLElement;
+                              const rect = target.getBoundingClientRect();
+                              // Start a timer; if held for 500ms, open actions
+                              if ((window as any).__lpTimer) {
+                                clearTimeout((window as any).__lpTimer);
+                              }
+                              (window as any).__lpTimer = window.setTimeout(() => {
+                                const popoverWidth = 320; // Approximate width of the popover
+                                const popoverHeight = 400; // Approximate height of the popover
+                                const padding = 16; // Safe padding from edges
+                                
+                                // Calculate optimal position
+                                let x = rect.left + rect.width / 2;
+                                let y = rect.top + rect.height / 2;
+                                
+                                // Adjust X position to prevent horizontal overflow
+                                if (x + popoverWidth / 2 > viewportDimensions.width - padding) {
+                                  x = viewportDimensions.width - popoverWidth / 2 - padding;
+                                }
+                                if (x - popoverWidth / 2 < padding) {
+                                  x = popoverWidth / 2 + padding;
+                                }
+                                
+                                // Adjust Y position to prevent vertical overflow
+                                if (y + popoverHeight / 2 > viewportDimensions.height - padding) {
+                                  y = viewportDimensions.height - popoverHeight / 2 - padding;
+                                }
+                                if (y - popoverHeight / 2 < padding) {
+                                  y = popoverHeight / 2 + padding;
+                                }
+                                
+                                setMobileMessageActions({
+                                  messageId: msg.id,
+                                  x,
+                                  y,
+                                });
+                              }, 500);
+                            }}
+                            onPointerUp={() => {
+                              if ((window as any).__lpTimer) {
+                                clearTimeout((window as any).__lpTimer);
+                                (window as any).__lpTimer = null;
+                              }
+                            }}
+                            onPointerLeave={() => {
+                              if ((window as any).__lpTimer) {
+                                clearTimeout((window as any).__lpTimer);
+                                (window as any).__lpTimer = null;
+                              }
+                            }}
+                          >
                            {contact.isGroup && !isSelf && sender?.name && (
                              <div className="mb-0.5 ">
                                <span className={`inline-block text-[11px] font-semibold ${getMentionClassesForKey(sender.id || sender.name)}`}>
@@ -736,12 +891,20 @@ useLayoutEffect(() => {
                                </span>
                              </div>
                            )}
-                         {msg.text && (
-                            (() => {
-                              // Use regex to detect emoji-only messages (1-2 emojis)
-                              const emojiRegex = /^([\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F1E6}-\u{1F1FF}\u{1F900}-\u{1F9FF}\u{1FA70}-\u{1FAFF}\u{1F018}-\u{1F270}\u{238C}-\u{2454}\u{20D0}-\u{20FF}]+\s?){1,2}$/u;
-                              return emojiRegex.test(msg.text.trim());
-                            })() ? (
+                          {(() => {
+                            const isStreamingThis =
+                              (contact.isAi || (contact.isGroup && aiPersonas.some(ai => ai.id === msg.senderId))) &&
+                              aiStream &&
+                              aiStream.messageId === msg.id;
+                            const displayedText = (isStreamingThis ? aiDisplayedText : (msg.text || ""));
+                            // Don't show the message content until streaming starts to prevent flash
+                            const shouldShowContent = !isStreamingThis || aiDisplayedText.length > 0;
+                            
+
+                            // Use regex to detect emoji-only messages (1-2 emojis). Use broad Unicode property.
+                            const emojiRegex = /^(\p{Emoji_Presentation}|\p{Extended_Pictographic}|\p{Emoji})+(?:\s(\p{Emoji_Presentation}|\p{Extended_Pictographic}|\p{Emoji})+)?$/u;
+                            const isEmojiOnly = displayedText.trim().length > 0 && emojiRegex.test(displayedText.trim());
+                            return !shouldShowContent ? null : isEmojiOnly ? (
                               <MessageContent
                                 markdown
                                 className={`${
@@ -757,16 +920,16 @@ useLayoutEffect(() => {
                                   return c ? { name: c.name, avatarUrl: (c as any).avatarUrl } : undefined
                                 }}
                               >
-                                {renderMessageWithMentions(msg.text as string)}
+                                {renderMessageWithMentions(displayedText)}
                               </MessageContent>
-                             ) : (
+                            ) : (
                               <MessageContent
                                 markdown
                                 className={`${
                                   isSelf
-                                    ? "bg-primary rounded-2xl rounded-tr-none  text-white"
+                                    ? "bg-primary rounded-2xl rounded-tr-none text-white"
                                     : "bg-muted rounded-2xl rounded-tl-none text-foreground"
-                                } px-3 py-2.5 break-words whitespace-pre-wrap max-w-2xl min-w-[80px] pb-7`}
+                                 } px-3 py-2.5 break-words max-w-lg min-w-[80px] pb-7 ${isStreamingThis ? "prose-h2:mt-0! prose-h2:scroll-m-0!" : ""}`}
                                 theme={theme.theme}
                                 copied={copied}
                                 setCopied={setCopied}
@@ -776,10 +939,10 @@ useLayoutEffect(() => {
                                   return c ? { name: c.name, avatarUrl: (c as any).avatarUrl } : undefined
                                 }}
                               >
-                                {isAiTyping && isSelf === false ? "" : renderMessageWithMentions(msg.text as string)}
+                                {renderMessageWithMentions(displayedText)}
                               </MessageContent>
-                            )
-                          )}
+                             )
+                           })()}
                           {/* Timestamp and read receipt inside bubble */}
                           <div
                             className={`absolute bottom-1 ${isSelf ? "right-4" : "left-3"} flex items-center gap-2 text-[11px] text-muted-foreground opacity-80`}
@@ -791,106 +954,115 @@ useLayoutEffect(() => {
                             </span>
                             {renderStatusIcon()}
                           </div>
+                          {/* Message actions beside bubble - hidden on mobile, shown on hover */}
+                          <MessageActions
+                            className={`absolute top-1/2 -translate-y-1/2 ${
+                              isSelf ? "-left-32" : "-right-32"
+                            } hidden md:flex items-center gap-2 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none group-hover:pointer-events-auto`}
+                          >
+                            <MessageAction tooltip="Add Reaction" side="top">
+                              <Popover
+                                open={openEmojiForMessageId === msg.id}
+                                onOpenChange={(open) =>
+                                  setOpenEmojiForMessageId(open ? msg.id : null)
+                                }
+                              >
+                                <PopoverTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    aria-label="Reaction"
+                                    className="rounded-full hover:text-foreground"
+                                    onClick={() =>
+                                      setOpenEmojiForMessageId(
+                                        openEmojiForMessageId === msg.id ? null : msg.id
+                                      )
+                                    }
+                                  >
+                                    <Smile className="w-4 h-4" />
+                                  </Button>
+                                </PopoverTrigger>
+                                <PopoverContent
+                                  className="p-1 w-auto min-w-[220px]"
+                                  side={isSelf ? "left" : "right"}
+                                  align="center"
+                                  sideOffset={6}
+                                >
+                                  <EmojiPickerReact
+                                    reactionsDefaultOpen={true}
+                                    onReactionClick={(emojiData: any) => {
+                                      onReact(msg.id, emojiData.emoji);
+                                      setOpenEmojiForMessageId(null);
+                                    }}
+                                    onEmojiClick={(emojiData: any) => {
+                                      onReact(msg.id, emojiData.emoji);
+                                      setOpenEmojiForMessageId(null);
+                                    }}
+                                    lazyLoadEmojis
+                                    autoFocusSearch={false}
+                                    suggestedEmojisMode={SuggestionMode.FREQUENT}
+                                    emojiStyle={EmojiStyle.APPLE}
+                                    theme={
+                                      document.documentElement.classList.contains("dark")
+                                        ? ("dark" as EmojiTheme)
+                                        : ("light" as EmojiTheme)
+                                    }
+                                  />
+                                </PopoverContent>
+                              </Popover>
+                            </MessageAction>
+
+                            <MessageAction tooltip="Reply" side="top">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                aria-label="Reply"
+                                onClick={() => setReplyingTo(msg)}
+                                className="rounded-full hover:text-foreground"
+                              >
+                                <Reply className="w-4 h-4" />
+                              </Button>
+                            </MessageAction>
+
+                            <MessageAction tooltip="Forward" side="top">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                aria-label="Forward"
+                                onClick={() => onForward(msg)}
+                                className="rounded-full hover:text-foreground"
+                              >
+                                <Forward className="w-4 h-4" />
+                              </Button>
+                            </MessageAction>
+                          </MessageActions>
                         </div>
-                       {/* Reactions + MessageActions on the same row */}
-<div className="relative flex flex-row items-center justify-between w-full mt-0.5 gap-2">
-  {/* Reactions bubble (always reserves space) */}
-  <div className="flex flex-wrap items-center gap-1 ml-2 min-h-[24px]">
-    {msg.reactions && msg.reactions.length > 0 &&
-      Object.entries(
-        msg.reactions.reduce<Record<string, string[]>>((acc, r) => {
-          (acc[r.emoji] ||= []).push(r.userId);
-          return acc;
-        }, {})
-      ).map(([emoji, userIds]) => (
-        <Button
-          variant="ghost"
-          key={`${msg.id}-${emoji}`}
-          onClick={() => onReact(msg.id, emoji)}
-          className="text-xs px-2 py-0.5 rounded-full bg-muted text-foreground/80 hover:bg-muted/80 cursor-pointer"
-          title={userIds
-            .map(
-              (id) => allKnownContacts.find((c) => c.id === id)?.name || "You"
-            )
-            .join(", ")}
-        >
-          {emoji} {userIds.length}
-        </Button>
-      ))}
-  </div>
-
-  {/* Message actions */}
-  <MessageActions className="flex items-center gap-2 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none group-hover:pointer-events-auto">
-    <MessageAction tooltip="Add Reaction" side="top">
-      <Popover
-        open={openEmojiForMessageId === msg.id}
-        onOpenChange={(open) =>
-          setOpenEmojiForMessageId(open ? msg.id : null)
-        }
-      >
-        <PopoverTrigger asChild>
-          <div
-            onMouseEnter={() => setOpenEmojiForMessageId(msg.id)}
-            style={{ display: "inline-block" }}
-          >
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Reaction"
-              className="rounded-full hover:text-foreground"
-            >
-              <Smile className="w-4 h-4" />
-            </Button>
-          </div>
-        </PopoverTrigger>
-        <PopoverContent
-          className="p-1 w-auto min-w-[180px] flex items-center gap-1"
-          side="top"
-          align={isSelf ? "end" : "start"}
-          onMouseEnter={() => setOpenEmojiForMessageId(msg.id)}
-          onMouseLeave={() => setOpenEmojiForMessageId(null)}
-        >
-          <EmojiPickerReact
-            reactionsDefaultOpen={true}
-            onReactionClick={(emojiData: any) => {
-              onReact(msg.id, emojiData.emoji);
-              setOpenEmojiForMessageId(null);
-            }}
-            theme={
-              document.documentElement.classList.contains("dark")
-                ? ("dark" as EmojiTheme)
-                : ("light" as EmojiTheme)
-            }
-          />
-        </PopoverContent>
-      </Popover>
-    </MessageAction>
-
-    <MessageAction tooltip="Reply" side="top">
-      <Button
-        variant="ghost"
-        size="icon"
-        aria-label="Reply"
-        onClick={() => setReplyingTo(msg)}
-        className="rounded-full hover:text-foreground"
-      >
-        <Reply className="w-4 h-4" />
-      </Button>
-    </MessageAction>
-
-    <MessageAction tooltip="Forward" side="top">
-      <Button
-        variant="ghost"
-        size="icon"
-        aria-label="Forward"
-        onClick={() => onForward(msg)}
-        className="rounded-full hover:text-foreground"
-      >
-        <Forward className="w-4 h-4" />
-      </Button>
-    </MessageAction>
-  </MessageActions>
-</div>
+                        {/* Reactions: show only when present, positioned below bubble */}
+                        {msg.reactions && msg.reactions.length > 0 && (
+                          <div className={`mt-1 flex ${isSelf ? "justify-end" : "justify-start"}`}>
+                            <div className="flex flex-wrap items-center gap-1 ml-2">
+                              {Object.entries(
+                                msg.reactions.reduce<Record<string, string[]>>((acc, r) => {
+                                  (acc[r.emoji] ||= []).push(r.userId);
+                                  return acc;
+                                }, {})
+                              ).map(([emoji, userIds]) => (
+                                <Button
+                                  variant="ghost"
+                                  key={`${msg.id}-${emoji}`}
+                                  onClick={() => onReact(msg.id, emoji)}
+                                  className="text-xs px-2 py-0.5 rounded-full bg-muted text-foreground/80 hover:bg-muted/80 cursor-pointer"
+                                  title={userIds
+                                    .map((id) => allKnownContacts.find((c) => c.id === id)?.name || "You")
+                                    .join(", ")}
+                                  style={{ fontFamily: '"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",system-ui,sans-serif' }}
+                                >
+                                  {emoji} {userIds.length}
+                                </Button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
 
                       </div>
                     </PKMessage>
@@ -908,8 +1080,7 @@ useLayoutEffect(() => {
                     allContacts={allKnownContacts}
                     currentUser={currentUser}
                   />
-                   <div className="bg-muted rounded-2xl rounded-bl-lg px-2 py-1 flex items-center gap-2 relative z-10">
-                     <Loader variant="text-blink" text="Thinking" size="sm" />
+                   <div className="rounded-bl-lg px-2 py-1 flex items-center gap-2 relative z-10">
                      <Loader variant="typing" />
                    </div>
                </div>
@@ -934,12 +1105,26 @@ useLayoutEffect(() => {
           )}
           <ChatContainerScrollAnchor />
         </ChatContainerContent>
-        <div className="absolute right-7 bottom-1/7 -translate-y-1/2 z-10">
+        <div className="absolute right-7 bottom-16 -translate-y-1/2 z-10">
             <ScrollButton variant="default" className="shadow-sm" />
         </div>
       </ChatContainerRoot>
       </div>
-      <div className="absolute z-10 bottom-2 w-full px-4 ">
+      {/* Hidden cache warmer to avoid repeated network fetches on first open */}
+      <div className="fixed -left-[9999px] -top-[9999px] pointer-events-none opacity-0">
+        <EmojiPickerReact
+          lazyLoadEmojis
+          autoFocusSearch={false}
+          suggestedEmojisMode={SuggestionMode.FREQUENT}
+          emojiStyle={EmojiStyle.APPLE}
+          theme={
+            document.documentElement.classList.contains("dark")
+              ? ("dark" as EmojiTheme)
+              : ("light" as EmojiTheme)
+          }
+        />
+      </div>
+      <div className="absolute z-10 bottom-0 w-full ">
         {attachment && (
             <div className="relative w-24 h-24 mb-2 p-1 border border-slate-300 dark:border-slate-700 rounded-lg">
             <img
@@ -986,56 +1171,162 @@ useLayoutEffect(() => {
             accept="image/*"
             className="hidden"
           />
-          <Mention className="w-full" inputValue={inputText} onInputValueChange={setInputText}>
+          {contact?.isGroup ? (
+            <Mention key={mentionResetKey} className="w-full" inputValue={inputText} onInputValueChange={setInputText}>
+              <PromptInput
+                value={inputText}
+                onValueChange={setInputText}
+                isLoading={isLoading}
+                onSubmit={() => handleSubmit()}
+                className="flex items-center border-input bg-popover relative z-10 w-full border-t pt-1 shadow-xs"
+              >
+                {/* Emoji picker overlay */}
+                <div className="relative">
+                  {isComposerEmojiOpen && (
+                    <div className="absolute bottom-[100%] left-0 mb-2 z-50 emoji-picker-container">
+                      <EmojiPickerReact
+                        onEmojiClick={(emojiData: any) => {
+                          setComposerEmojiOpen(false);
+                          setInputText((prev) => prev + emojiData.emoji);
+                        }}
+                        lazyLoadEmojis
+                        autoFocusSearch={false}
+                        suggestedEmojisMode={SuggestionMode.FREQUENT}
+                        emojiStyle={EmojiStyle.APPLE}
+                        theme={
+                          document.documentElement.classList.contains("dark")
+                            ? ("dark" as EmojiTheme)
+                            : ("light" as EmojiTheme)
+                        }
+                      />
+                    </div>
+                  )}
+                </div>
+                
+                {/* Actions, textarea, and send button in one line */}
+                <div className="flex items-center gap-2 px-3  w-full">
+                  {/* Actions before textarea */}
+                  <div className="flex items-center gap-2">
+                    <PromptInputActions>
+                      <PromptInputAction tooltip="Attach files">
+                        <Button variant="outline" size="icon" className="size-9 rounded-full" asChild>
+                          <label htmlFor="file-upload" className="cursor-pointer">
+                            <>
+                              <input
+                                type="file"
+                                onChange={handleFileChange}
+                                className="hidden"
+                                id="file-upload"
+                              />
+                              <Paperclip className="size-4" />
+                            </>
+                          </label>
+                        </Button>
+                      </PromptInputAction>
+                      <PromptInputAction tooltip="Emoji">
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="size-9 rounded-full"
+                          type="button"
+                          data-emoji-trigger
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            setComposerEmojiOpen(true);
+                          }}
+                          onClick={() => setComposerEmojiOpen(true)}
+                        >
+                          <Smile className="size-4" />
+                        </Button>
+                      </PromptInputAction>
+                    </PromptInputActions>
+                  </div>
+                  {/* MentionInput should take full width */}
+                  <div className="flex-1 min-w-0">
+                    <MentionInput
+                      className="w-full border-none transition-all duration-200 ease-in-out focus-visible:ring-0 focus-visible:ring-offset-0"
+                      asChild
+                    >
+                      <PromptInputTextarea
+                        placeholder="Type a message..."
+                        className="w-full text-base leading-[1.3] sm:text-base md:text-base px-3 py-2"
+                      />
+                    </MentionInput>
+                  </div>
+                  {/* Send button on the right */}
+                  <Button
+                    size="icon"
+                    disabled={!inputText.trim() && !attachment}
+                    onClick={handleSubmit}
+                    className="size-9 rounded-full"
+                    type="button"
+                  >
+                    <Send className="size-4" />
+                  </Button>
+                </div>
+                <MentionContent
+                  className="absolute left-0 w-[calc(100%-0px)] max-w-[520px] z-50 rounded-md border bg-popover p-1 shadow-md"
+                  style={{ minWidth: '220px' }}
+                >
+                  {contact?.isGroup ? (contact.memberIds || []).map((id) => {
+                    const member = allKnownContacts.find((c) => c.id === id);
+                    if (!member) return null;
+                    return (
+                      <MentionItem
+                        key={member.id}
+                        value={member.name}
+                        className="px-2 py-1 rounded hover:bg-accent cursor-pointer flex items-center gap-2"
+                      >
+                        <GeneratedAvatar
+                          key={member.id + "-avatar"}
+                          name={member.name}
+                          allContacts={allKnownContacts}
+                          currentUser={currentUser}
+                        />
+                        <span className="font-medium">{member.name}</span>
+                      </MentionItem>
+                    );
+                  }) : null}
+                </MentionContent>
+            </PromptInput>
+            </Mention>
+          ) : (
+            
             <PromptInput
               value={inputText}
               onValueChange={setInputText}
               isLoading={isLoading}
               onSubmit={() => handleSubmit()}
-              className="border-input bg-popover relative z-10 w-full rounded-3xl border pt-1 shadow-xs"
+                className="flex items-center border-input bg-popover relative z-10 w-full border-t pt-1 shadow-xs"
             >
               {/* Emoji picker overlay */}
               <div className="relative">
                 {isComposerEmojiOpen && (
-                  <div className="absolute bottom-[100%] left-0 mb-2 z-50">
-                    <EmojiPicker
-                      onEmojiSelect={(emoji) => {
+                  <div className="absolute bottom-[100%] left-0 mb-2 z-50 emoji-picker-container">
+                    <EmojiPickerReact
+                      onEmojiClick={(emojiData: any) => {
                         setComposerEmojiOpen(false);
-                        setInputText((prev) => prev + emoji);
+                        setInputText((prev) => prev + emojiData.emoji);
                       }}
-                      onClose={() => setComposerEmojiOpen(false)}
+                      lazyLoadEmojis
+                      autoFocusSearch={false}
+                      suggestedEmojisMode={SuggestionMode.FREQUENT}
+                      emojiStyle={EmojiStyle.APPLE}
+                      theme={
+                        document.documentElement.classList.contains("dark")
+                          ? ("dark" as EmojiTheme)
+                          : ("light" as EmojiTheme)
+                      }
                     />
                   </div>
                 )}
               </div>
-              <MentionInput className="border-none transition-all duration-200 ease-in-out focus-visible:ring-0 focus-visible:ring-offset-0" asChild>
-                <PromptInputTextarea
-                  placeholder="Type a message..."
-                  className="min-h-[44px] pt-3 pl-4 text-base leading-[1.3] sm:text-base md:text-base"
-                />
-              </MentionInput>
-              <MentionContent className="z-50 rounded-md border bg-popover p-1 shadow-md">
-                {(contact?.isGroup ? (contact.memberIds || []).map((id) => {
-                  const member = allKnownContacts.find((c) => c.id === id);
-                  if (!member) return null;
-                  return (
-                    <MentionItem
-                      key={member.id}
-                      value={member.name}
-                      className="px-2 py-1 rounded hover:bg-accent cursor-pointer flex items-center gap-2"
-                    >
-                      <GeneratedAvatar
-                        name={member.name}
-                        allContacts={allKnownContacts}
-                        currentUser={currentUser}
-                      />
-                      <span className="font-medium">{member.name}</span>
-                    </MentionItem>
-                  );
-                }) : null)}
-              </MentionContent>
-              <PromptInputActions className="mt-5 flex w-full items-center justify-between gap-2 px-3 pb-3">
-                <div className="flex items-center gap-2">
+              
+              {/* Actions, textarea, and send button in one line */}
+              <div className="flex items-center gap-2 px-3 py-2 w-full">
+                {/* Actions before textarea */}
+                <div className="flex items-center gap-2 shrink-0">
+                  <PromptInputActions>
                   <PromptInputAction tooltip="Attach files">
                     <Button variant="outline" size="icon" className="size-9 rounded-full" asChild>
                       <label htmlFor="file-upload" className="cursor-pointer">
@@ -1057,6 +1348,7 @@ useLayoutEffect(() => {
                       size="icon"
                       className="size-9 rounded-full"
                       type="button"
+                      data-emoji-trigger
                       onMouseDown={(e) => {
                         e.preventDefault();
                         setComposerEmojiOpen(true);
@@ -1066,8 +1358,19 @@ useLayoutEffect(() => {
                       <Smile className="size-4" />
                     </Button>
                   </PromptInputAction>
+                  </PromptInputActions>
                 </div>
-                <div className="flex items-center gap-2">
+                
+                {/* Textarea in the middle - takes full width */}
+                <div className="flex-1 min-w-0">
+                  <PromptInputTextarea
+                    placeholder="Type a message..."
+                    className="w-full text-base leading-[1.3] sm:text-base md:text-base resize-none"
+                  />
+                </div>
+                
+                {/* Send button on the right */}
+                <div className="shrink-0">
                   <Button
                     size="icon"
                     disabled={!inputText.trim() && !attachment}
@@ -1078,14 +1381,112 @@ useLayoutEffect(() => {
                     <Send className="size-4" />
                   </Button>
                 </div>
-              </PromptInputActions>
+              </div>
             </PromptInput>
-          </Mention>
+          )}
         {/* Removed duplicate closing form tag */}
         </form>
+        
+        {/* Mobile Message Actions Popover */}
+        {mobileMessageActions && (
+          <div 
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/20"
+            onClick={() => setMobileMessageActions(null)}
+          >
+            <div 
+              className="mobile-message-actions bg-popover border rounded-lg shadow-lg p-2 max-w-[320px] w-auto"
+              style={{
+                position: 'absolute',
+                left: `${mobileMessageActions.x}px`,
+                top: `${mobileMessageActions.y}px`,
+                transform: 'translate(-50%, -50%)',
+                zIndex: 1000,
+                maxHeight: '80vh',
+                overflowY: 'auto'
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Show reaction picker directly in mobile popover */}
+              <div className="flex flex-col gap-1">
+                <div className="mb-2">
+                  <EmojiPickerReact
+                    reactionsDefaultOpen={true}
+                    onEmojiClick={(emojiData: any) => {
+                      const message = messages.find(m => m.id === mobileMessageActions.messageId);
+                      if (message) {
+                        onReact(message.id, emojiData.emoji);
+                      }
+                      setMobileMessageActions(null);
+                    }}
+                    lazyLoadEmojis
+                    autoFocusSearch={false}
+                    suggestedEmojisMode={SuggestionMode.FREQUENT}
+                    emojiStyle={EmojiStyle.APPLE}
+                    theme={
+                      document.documentElement.classList.contains("dark")
+                        ? ("dark" as EmojiTheme)
+                        : ("light" as EmojiTheme)
+                    }
+                  />
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="justify-start"
+                  onClick={() => {
+                    const message = messages.find(m => m.id === mobileMessageActions.messageId);
+                    if (message) {
+                      setReplyingTo(message);
+                    }
+                    setMobileMessageActions(null);
+                  }}
+                >
+                  <Reply className="w-4 h-4 mr-2" />
+                  Reply
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="justify-start"
+                  onClick={() => {
+                    // Forward logic
+                    const message = messages.find(m => m.id === mobileMessageActions.messageId);
+                    if (message) {
+                      onForward(message);
+                    }
+                    setMobileMessageActions(null);
+                  }}
+                >
+                  <Forward className="w-4 h-4 mr-2" />
+                  Forward
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="justify-start"
+                  onClick={() => {
+                    // Copy logic
+                    const message = messages.find(m => m.id === mobileMessageActions.messageId);
+                    if (message) {
+                      navigator.clipboard.writeText(message.text || '');
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 2000);
+                    }
+                    setMobileMessageActions(null);
+                  }}
+                >
+                  <Copy className="w-4 h-4 mr-2" />
+                  Copy
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
-};
+})
+
+ChatView.displayName = 'ChatView';
 
 export default ChatView;

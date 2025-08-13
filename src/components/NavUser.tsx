@@ -20,34 +20,43 @@ interface NavUserProps {
   onLogout: () => void;
   onNotifications?: () => void;
   pendingNotifications?: number;
+  isMobile?: boolean;
+  showOnlineStatus?: boolean;
 }
 
-export const NavUser: React.FC<NavUserProps> = ({ user, onSettings, onLogout, onNotifications, pendingNotifications = 0 }) => {
-  const { isMobile } = useSidebar();
+export const NavUser: React.FC<NavUserProps> = ({ user, onSettings, onLogout, onNotifications, pendingNotifications = 0, isMobile = false, showOnlineStatus = false }) => {
+  const { isMobile: sidebarIsMobile } = useSidebar();
 
   const initials = (user.name || 'U').split(' ').map(s => s[0]).slice(0, 2).join('').toUpperCase();
 
   return (
-    <SidebarMenu>
+    <SidebarMenu className={`${isMobile ? "w-fit" : "w-full"}`}>
       <SidebarMenuItem>
         <div className="flex items-center gap-2 px-2 py-1">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <SidebarMenuButton size="lg" className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground flex-1">
-                <Avatar className="h-8 w-8 rounded-lg">
-                  <AvatarImage src={user.avatar || '/placeholder.svg'} alt={user.name} />
-                  <AvatarFallback className="rounded-lg">{initials}</AvatarFallback>
-                </Avatar>
-                <div className="grid flex-1 text-left text-sm leading-tight min-w-0">
-                  <span className="truncate font-medium">{user.name}</span>
-                  {user.email && (
-                    <span className="text-muted-foreground truncate text-xs">{user.email}</span>
-                  )}
+              <SidebarMenuButton size="lg" className={`data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground flex-1`}>
+                <div className="relative">
+                  <Avatar className="h-8 w-8 rounded-lg">
+                    <AvatarImage src={user.avatar || '/placeholder.svg'} alt={user.name} />
+                    <AvatarFallback className="rounded-lg">{initials}</AvatarFallback>
+                  </Avatar>
+                  {showOnlineStatus && <div className="online-indicator"></div>}
                 </div>
-                <IconDotsVertical className="ml-auto size-4" />
+                {!isMobile && (
+                  <div className="grid flex-1 text-left text-sm leading-tight min-w-0">
+                    <span className="truncate font-medium">{user.name}</span>
+                    {showOnlineStatus ? (
+                      <span className="text-green-500 truncate text-xs">Online</span>
+                    ) : user.email ? (
+                      <span className="text-muted-foreground truncate text-xs">{user.email}</span>
+                    ) : null}
+                  </div>
+                )}
+                {!isMobile && <IconDotsVertical className="ml-auto size-4" />}
               </SidebarMenuButton>
             </DropdownMenuTrigger>
-            <DropdownMenuContent className="w-64 rounded-lg" side={'bottom'} align="start" sideOffset={6}>
+            <DropdownMenuContent className="w-64 rounded-lg" side={'bottom'} align={`${isMobile ? "end" : "start"}`} sideOffset={6}>
               <DropdownMenuLabel className="p-0 font-normal">
                 <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
                   <Avatar className="h-8 w-8 rounded-lg">

@@ -48,6 +48,9 @@ const MessageAvatar = ({
 export type MessageContentProps = {
   children: React.ReactNode
   markdown?: boolean
+  copied?: boolean
+  handleCopy?: (text: string) => void
+
   className?: string
   resolveMentionContact?: (idOrName: string) => { name: string; avatarUrl?: string } | undefined
 } & React.ComponentProps<typeof Markdown> &
@@ -55,7 +58,9 @@ export type MessageContentProps = {
 
 const MessageContent = ({
   children,
-  markdown = false,
+  markdown,
+  copied, 
+  handleCopy,
   className,
   ...props
 }: MessageContentProps) => {
@@ -120,7 +125,7 @@ const MessageContent = ({
   }
 
   return markdown ? (
-    <Markdown className={classNames} components={{ ...props.components, ...mentionComponents }} {...props}>
+    <Markdown className={classNames} copied={copied}  handleCopy={handleCopy} components={{ ...props.components, ...mentionComponents }} {...props}>
       {children as string}
     </Markdown>
   ) : (
