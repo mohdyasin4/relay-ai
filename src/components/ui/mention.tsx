@@ -11,7 +11,7 @@ const Mention = React.forwardRef<
     data-slot="mention"
     ref={ref}
     className={cn(
-      "**:data-tag:rounded **:data-tag:bg-blue-200 **:data-tag:py-px **:data-tag:text-blue-950 dark:**:data-tag:bg-blue-800 dark:**:data-tag:text-blue-50",
+      "[--dice-transform-origin:8px] **:data-tag:rounded-full **:data-tag:px-2.5 **:data-tag:py-0.5 **:data-tag:pb-1 **:data-tag:text-[12px] **:data-tag:font-semibold **:data-tag:bg-primary **:data-tag:text-primary-foreground **:data-tag:ring-1 **:data-tag:ring-border/40 dark:**:data-tag:bg-primary dark:**:data-tag:text-primary-foreground",
       className,
     )}
     {...props}
@@ -52,19 +52,17 @@ const MentionContent = React.forwardRef<
   React.ComponentRef<typeof MentionPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof MentionPrimitive.Content>
 >(({ className, children, ...props }, ref) => (
-  <MentionPrimitive.Portal>
-    <MentionPrimitive.Content
-      data-slot="mention-content"
-      ref={ref}
-      className={cn(
-        "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 relative z-50 min-w-[8rem] overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-md data-[state=closed]:animate-out data-[state=open]:animate-in",
-        className,
-      )}
-      {...props}
-    >
-      {children}
-    </MentionPrimitive.Content>
-  </MentionPrimitive.Portal>
+  <MentionPrimitive.Content
+    data-slot="mention-content"
+    ref={ref}
+    className={cn(
+      "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 relative z-50 min-w-[8rem] max-h-[40vh] overflow-auto overscroll-contain rounded-lg border bg-popover/95 backdrop-blur-md p-1 text-popover-foreground shadow-xl ring-1 ring-border/50 data-[state=closed]:animate-out data-[state=open]:animate-in",
+      className,
+    )}
+    {...props}
+  >
+    {children}
+  </MentionPrimitive.Content>
 ));
 MentionContent.displayName = MentionPrimitive.Content.displayName;
 
@@ -76,7 +74,7 @@ const MentionItem = React.forwardRef<
     data-slot="mention-item"
     ref={ref}
     className={cn(
-      "relative flex w-full cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-hidden data-disabled:pointer-events-none data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:opacity-50",
+      "relative flex w-full cursor-default select-none items-center gap-2 rounded-sm text-sm outline-hidden data-disabled:pointer-events-none data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:opacity-50",
       className,
     )}
     {...props}

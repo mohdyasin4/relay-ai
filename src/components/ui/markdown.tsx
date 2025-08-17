@@ -1,10 +1,11 @@
 import { cn } from "@/lib/utils"
 import { marked } from "marked"
-import { memo, useId, useMemo } from "react"
+import { memo, useEffect, useState } from "react"
 import ReactMarkdown, { type Components } from "react-markdown"
 import remarkBreaks from "remark-breaks"
 import remarkGfm from "remark-gfm"
 import { CodeBlock, CodeBlockCode, CodeBlockHeader } from "./code-block"
+import { useTheme } from "@/components/theme-provider"
 
 export type MarkdownProps = {
   children: string
@@ -40,6 +41,19 @@ type CodeComponentProps = React.HTMLAttributes<HTMLElement> & {
 
 const INITIAL_COMPONENTS: Partial<Components> = {
   code: function CodeComponent({ className, theme, handleCopy, copied, setCopied, children, ...props }: CodeComponentProps) {
+    const { theme: currentTheme } = useTheme();
+
+    const [resolvedTheme, setResolvedTheme] = useState<"vesper" | "github-light-high-contrast">(
+      currentTheme === "dark" ? "vesper" : "github-light-high-contrast"
+    );
+
+    useEffect(() => {
+      // Recompute on theme change
+      const root = document.documentElement;
+      const isDark = root.classList.contains("dark");
+      setResolvedTheme(isDark ? "vesper" : "github-light-high-contrast");
+    }, [currentTheme]);
+
     const isInline =
       !props.node?.position?.start.line ||
       props.node?.position?.start.line === props.node?.position?.end.line
@@ -48,7 +62,7 @@ const INITIAL_COMPONENTS: Partial<Components> = {
       return (
         <span
           className={cn(
-            "bg-primary-foreground rounded-sm px-1 font-mono text-sm",
+            "bg-muted/80 dark:bg-muted/60 text-foreground rounded-sm px-1.5 py-0.5 font-mono text-sm border border-border/50",
             className
           )}
           {...props}
@@ -59,53 +73,37 @@ const INITIAL_COMPONENTS: Partial<Components> = {
     }
 
     const language = extractLanguage(className)
-    const resolvedTheme = theme === "dark" ? "vesper" : "github-light-high-contrast"
-    console.log(`Using theme: ${resolvedTheme} for language: ${language}`)
+    const codeContent = children as string
+    
+    // Debug logging for code blocks
+    console.log('Code block rendering:', {
+      language,
+      contentLength: codeContent?.length || 0,
+      isInline,
+      className,
+      hasCodeContent: !!codeContent,
+      codeContent: codeContent?.substring(0, 100) // Show first 100 chars
+    });
+    
     return (
-      <CodeBlock className={className}>
+      <CodeBlock className={cn("font-mono", className)}>
         <CodeBlockHeader
           language={language}
-          handleCopy={() => handleCopy?.(children as string)}
+          handleCopy={() => handleCopy?.(codeContent)}
           copied={copied}
           setCopied={setCopied}
         />
-        <CodeBlockCode code={children as string} language={language} theme={resolvedTheme} />
+        <CodeBlockCode code={codeContent} language={language} theme={resolvedTheme} className="font-mono" />
       </CodeBlock>
     )
   },
   pre: function PreComponent({ children }) {
+    console.log('Pre component called with children:', children);
     return <>{children}</>
   },
 }
 
-const MemoizedMarkdownBlock = memo(
-  function MarkdownBlock({
-    content,
-    components = INITIAL_COMPONENTS,
-  }: {
-    content: string
-    components?: Partial<Components>
-  }) {
-    return (
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkBreaks]}
-        components={components}
-        urlTransform={(url: string) => {
-          // Allow our custom mention: scheme while keeping other URIs intact
-          if (typeof url === "string" && url.startsWith("mention:")) return url
-          return url
-        }}
-      >
-        {content}
-      </ReactMarkdown>
-    )
-  },
-  function propsAreEqual(prevProps, nextProps) {
-    return prevProps.content === nextProps.content
-  }
-)
 
-MemoizedMarkdownBlock.displayName = "MemoizedMarkdownBlock"
 
 function MarkdownComponent({
   children,
@@ -117,29 +115,42 @@ function MarkdownComponent({
   setCopied,
   components = INITIAL_COMPONENTS,
 }: MarkdownProps) {
-  const generatedId = useId()
-  const blockId = id ?? generatedId
-  const blocks = useMemo(() => parseMarkdownIntoBlocks(children), [children])
-
+  // Debug logging for markdown content
+  if (typeof children === 'string' && children.includes('```')) {
+    console.log('Markdown component received content with code blocks:', {
+      contentLength: children.length,
+      hasCodeBlocks: children.includes('```'),
+      sample: children.substring(0, 200),
+      fullContent: children // Log the full content for debugging
+    });
+  }
+  
   return (
     <div className={className}>
-      {blocks.map((block, index) => (
-        <MemoizedMarkdownBlock
-          key={`${blockId}-block-${index}`}
-          content={block}
-          components={{
-            ...components,
-            code: (props: any) =>
-              (INITIAL_COMPONENTS.code as any)?.({
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkBreaks]}
+        components={{
+          ...components,
+          code: (props: any) => {
+            console.log('ReactMarkdown code component called:', props);
+            return INITIAL_COMPONENTS.code ? (
+              (INITIAL_COMPONENTS.code as any)({
                 ...props,
-                theme,
                 handleCopy,
                 copied,
                 setCopied,
-              }),
-          }}
-        />
-      ))}
+              })
+            ) : null;
+          },
+          // Add explicit handling for pre tags to ensure code blocks are processed
+          pre: (props: any) => {
+            console.log('ReactMarkdown pre component called:', props);
+            return <pre {...props} />;
+          },
+        }}
+      >
+        {children}
+      </ReactMarkdown>
     </div>
   )
 }

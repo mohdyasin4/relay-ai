@@ -30,79 +30,86 @@ export function throttle<T extends (...args: any[]) => any>(
   func: T,
   limit: number
 ): (...args: Parameters<T>) => void {
-  let inThrottle: boolean = false;
+  let inThrottle: boolean;
   
   return function executedFunction(...args: Parameters<T>) {
     if (!inThrottle) {
-      func(...args);
+      func.apply(this, args);
       inThrottle = true;
-      setTimeout(() => {
-        inThrottle = false;
-      }, limit);
+      setTimeout(() => inThrottle = false, limit);
     }
   };
 }
 
-// Memoization for expensive computations
+// Memoization helper for expensive computations
 export function memoize<T extends (...args: any[]) => any>(
-  fn: T,
+  func: T,
   getKey?: (...args: Parameters<T>) => string
 ): T {
   const cache = new Map<string, ReturnType<T>>();
   
-  return ((...args: Parameters<T>): ReturnType<T> => {
+  return ((...args: Parameters<T>) => {
     const key = getKey ? getKey(...args) : JSON.stringify(args);
     
     if (cache.has(key)) {
-      return cache.get(key)!;
+      return cache.get(key);
     }
     
-    const result = fn(...args);
+    const result = func(...args);
     cache.set(key, result);
-    
-    // Prevent memory leaks by limiting cache size
-    if (cache.size > 100) {
-      const firstKey = cache.keys().next().value;
-      cache.delete(firstKey);
-    }
-    
     return result;
   }) as T;
 }
 
-// Request animation frame debounce for DOM operations
-export function rafDebounce<T extends (...args: any[]) => any>(
-  func: T
-): (...args: Parameters<T>) => void {
-  let rafId: number | null = null;
+// Intersection Observer for lazy loading and performance
+export function createIntersectionObserver(
+  callback: IntersectionObserverCallback,
+  options: IntersectionObserverInit = {}
+): IntersectionObserver {
+  return new IntersectionObserver(callback, {
+    root: null,
+    rootMargin: '50px',
+    threshold: 0.1,
+    ...options,
+  });
+}
+
+// Virtual scrolling helper for large lists
+export function createVirtualScroller<T>(
+  items: T[],
+  itemHeight: number,
+  containerHeight: number,
+  scrollTop: number
+): { startIndex: number; endIndex: number; visibleItems: T[] } {
+  const startIndex = Math.floor(scrollTop / itemHeight);
+  const endIndex = Math.min(
+    startIndex + Math.ceil(containerHeight / itemHeight) + 1,
+    items.length
+  );
   
-  return function executedFunction(...args: Parameters<T>) {
-    if (rafId) {
-      cancelAnimationFrame(rafId);
-    }
-    
-    rafId = requestAnimationFrame(() => {
-      func(...args);
-      rafId = null;
-    });
+  return {
+    startIndex,
+    endIndex,
+    visibleItems: items.slice(startIndex, endIndex),
   };
 }
 
-// Batch operations to reduce re-renders
-export class BatchProcessor<T> {
+// API call batching utility
+export class ApiBatcher<T> {
   private batch: T[] = [];
-  private timeoutId: NodeJS.Timeout | null = null;
+  private timeout: NodeJS.Timeout | null = null;
   private batchSize: number;
   private delay: number;
-  private processor: (items: T[]) => void;
+  private processor: (items: T[]) => Promise<void>;
 
   constructor(
-    processor: (items: T[]) => void,
-    options: { batchSize?: number; delay?: number } = {}
+    processor: (items: T[]) => Promise<void>,
+    batchSize = 10,
+    delay = 100
   ) {
     this.processor = processor;
-    this.batchSize = options.batchSize || 10;
-    this.delay = options.delay || 100;
+    this.batchSize = batchSize;
+    this.delay = delay;
   }
 
   add(item: T): void {
@@ -110,133 +117,158 @@ export class BatchProcessor<T> {
     
     if (this.batch.length >= this.batchSize) {
       this.flush();
-    } else if (!this.timeoutId) {
-      this.timeoutId = setTimeout(() => this.flush(), this.delay);
+    } else if (!this.timeout) {
+      this.timeout = setTimeout(() => this.flush(), this.delay);
     }
   }
 
-  flush(): void {
-    if (this.batch.length === 0) return;
+  async flush(): Promise<void> {
+    if (this.timeout) {
+      clearTimeout(this.timeout);
+      this.timeout = null;
+    }
     
+    if (this.batch.length > 0) {
     const items = [...this.batch];
     this.batch = [];
+      await this.processor(items);
+    }
+  }
+}
+
+// Request deduplication to prevent duplicate API calls
+export class RequestDeduplicator<T> {
+  private pendingRequests = new Map<string, Promise<T>>();
+
+  async deduplicate<T>(
+    key: string,
+    requestFn: () => Promise<T>
+  ): Promise<T> {
+    if (this.pendingRequests.has(key)) {
+      return this.pendingRequests.get(key)!;
+    }
+
+    const promise = requestFn();
+    this.pendingRequests.set(key, promise);
     
-    if (this.timeoutId) {
-      clearTimeout(this.timeoutId);
-      this.timeoutId = null;
+    try {
+      const result = await promise;
+      return result;
+    } finally {
+      this.pendingRequests.delete(key);
+    }
+  }
+}
+
+// Cache management utility
+export class CacheManager<K, V> {
+  private cache = new Map<K, { value: V; timestamp: number; ttl: number }>();
+
+  set(key: K, value: V, ttl = 5 * 60 * 1000): void {
+    this.cache.set(key, {
+      value,
+      timestamp: Date.now(),
+      ttl,
+    });
+  }
+
+  get(key: K): V | undefined {
+    const item = this.cache.get(key);
+    if (!item) return undefined;
+
+    if (Date.now() - item.timestamp > item.ttl) {
+      this.cache.delete(key);
+      return undefined;
+    }
+
+    return item.value;
+  }
+
+  clear(): void {
+    this.cache.clear();
+  }
+
+  size(): number {
+    return this.cache.size;
+  }
+}
+
+// Performance monitoring utility
+export class PerformanceMonitor {
+  private metrics: Map<string, number[]> = new Map();
+
+  startTimer(label: string): () => void {
+    const start = performance.now();
+    return () => this.endTimer(label, start);
+  }
+
+  private endTimer(label: string, start: number): void {
+    const duration = performance.now() - start;
+    if (!this.metrics.has(label)) {
+      this.metrics.set(label, []);
+    }
+    this.metrics.get(label)!.push(duration);
+  }
+
+  getMetrics(label: string): { avg: number; min: number; max: number; count: number } {
+    const values = this.metrics.get(label) || [];
+    if (values.length === 0) {
+      return { avg: 0, min: 0, max: 0, count: 0 };
+    }
+
+    const sum = values.reduce((a, b) => a + b, 0);
+    return {
+      avg: sum / values.length,
+      min: Math.min(...values),
+      max: Math.max(...values),
+      count: values.length,
+    };
+  }
+
+  clearMetrics(): void {
+    this.metrics.clear();
+  }
+}
+
+// React-specific performance utilities
+export const ReactPerformanceUtils = {
+  // Memoization helper for expensive calculations
+  useMemoizedCallback: <T extends (...args: any[]) => any>(
+    callback: T,
+    deps: React.DependencyList
+  ): T => {
+    // This is a placeholder - in actual usage, use React.useCallback
+    return callback;
+  },
+
+  // Prevent unnecessary re-renders
+  shouldComponentUpdate: <T extends Record<string, any>>(
+    prevProps: T,
+    nextProps: T,
+    keysToCompare: (keyof T)[]
+  ): boolean => {
+    return keysToCompare.some(key => prevProps[key] !== nextProps[key]);
+  },
+
+  // Deep comparison for objects
+  deepEqual: (a: any, b: any): boolean => {
+    if (a === b) return true;
+    if (a == null || b == null) return false;
+    if (typeof a !== typeof b) return false;
+    
+    if (typeof a === 'object') {
+      const keysA = Object.keys(a);
+      const keysB = Object.keys(b);
+      
+      if (keysA.length !== keysB.length) return false;
+      
+      return keysA.every(key => deepEqual(a[key], b[key]));
     }
     
-    this.processor(items);
-  }
-}
+    return false;
+  },
+};
 
-// Intersection Observer utility for lazy loading
-export function createIntersectionObserver(
-  callback: (entries: IntersectionObserverEntry[]) => void,
-  options: IntersectionObserverInit = {}
-): IntersectionObserver {
-  const defaultOptions: IntersectionObserverInit = {
-    root: null,
-    rootMargin: '50px',
-    threshold: 0.1,
-    ...options,
-  };
-  
-  return new IntersectionObserver(callback, defaultOptions);
-}
-
-// Resize observer utility
-export function createResizeObserver(
-  callback: (entries: ResizeObserverEntry[]) => void
-): ResizeObserver {
-  return new ResizeObserver(throttle(callback, 16)); // ~60fps
-}
-
-// Efficient array updates that minimize re-renders
-export function updateArrayImmutably<T>(
-  array: T[],
-  index: number,
-  item: T
-): T[] {
-  if (array[index] === item) return array; // No change needed
-  
-  const newArray = [...array];
-  newArray[index] = item;
-  return newArray;
-}
-
-export function insertIntoArrayImmutably<T>(
-  array: T[],
-  index: number,
-  item: T
-): T[] {
-  return [...array.slice(0, index), item, ...array.slice(index)];
-}
-
-export function removeFromArrayImmutably<T>(
-  array: T[],
-  index: number
-): T[] {
-  return [...array.slice(0, index), ...array.slice(index + 1)];
-}
-
-// Virtual scrolling helper
-export interface VirtualScrollState {
-  startIndex: number;
-  endIndex: number;
-  offsetY: number;
-}
-
-export function calculateVirtualScrollState(
-  scrollTop: number,
-  containerHeight: number,
-  itemHeight: number,
-  totalItems: number,
-  overscan = 5
-): VirtualScrollState {
-  const startIndex = Math.max(0, Math.floor(scrollTop / itemHeight) - overscan);
-  const visibleCount = Math.ceil(containerHeight / itemHeight);
-  const endIndex = Math.min(totalItems - 1, startIndex + visibleCount + overscan * 2);
-  const offsetY = startIndex * itemHeight;
-  
-  return { startIndex, endIndex, offsetY };
-}
-
-// Memory usage monitoring (development only)
-export function monitorMemoryUsage(): void {
-  if (process.env.NODE_ENV !== 'development') return;
-  
-  if ('memory' in performance) {
-    const memory = (performance as any).memory;
-    console.group('Memory Usage');
-    console.log(`Used JS Heap: ${(memory.usedJSHeapSize / 1048576).toFixed(2)} MB`);
-    console.log(`Total JS Heap: ${(memory.totalJSHeapSize / 1048576).toFixed(2)} MB`);
-    console.log(`Heap Limit: ${(memory.jsHeapSizeLimit / 1048576).toFixed(2)} MB`);
-    console.groupEnd();
-  }
-}
-
-// Component render performance tracker
-export function withPerformanceTracking<P extends object>(
-  Component: React.ComponentType<P>,
-  componentName: string
-): React.ComponentType<P> {
-  if (process.env.NODE_ENV !== 'development') {
-    return Component;
-  }
-  
-  return function PerformanceTrackedComponent(props: P) {
-    const renderStart = performance.now();
-    
-    React.useEffect(() => {
-      const renderEnd = performance.now();
-      const renderTime = renderEnd - renderStart;
-      
-      if (renderTime > 16) { // Slower than 60fps
-        console.warn(`${componentName} render took ${renderTime.toFixed(2)}ms (>16ms threshold)`);
-      }
-    });
-    
-    return React.createElement(Component, props);
-  };
-}
+// Export the deepEqual function separately for convenience
+const { deepEqual } = ReactPerformanceUtils;
+export { deepEqual };

@@ -10,25 +10,9 @@ export const createClient = () => {
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: true,
-      flowType: 'pkce', // Use PKCE flow for better security
-      storageKey: 'gemini-messenger-auth',
-      // The following settings help with cross-origin/cross-device issues
-      storage: {
-        getItem: (key) => {
-          try {
-            return JSON.parse(localStorage.getItem(key) || '');
-          } catch (error) {
-            return null;
-          }
-        },
-        setItem: (key, value) => {
-          localStorage.setItem(key, JSON.stringify(value));
-        },
-        removeItem: (key) => {
-          localStorage.removeItem(key);
-        }
-      }
-    }
+      flowType: 'pkce',
+      storageKey: 'relay-auth-session',
+    },
   });
 };
 

@@ -1,4 +1,4 @@
-export type Theme = 'light' | 'dark';
+export type Theme = 'light' | 'dark' | 'system';
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
 
@@ -108,7 +108,21 @@ export interface FriendRequestAccepted {
     requesterId: string;
 }
 
-export type MqttPayload = Message | Invitation | ReadReceipt | DeliveryReceipt | TypingIndicatorPayload | ReactionPayload | FriendRequestAccepted;
+export interface FriendRequest {
+    type: 'friend_request';
+    requesterId: string;
+    requesterName: string;
+    requesterEmail: string;
+}
+
+export interface FriendRequestProcessed {
+    type: 'friend_request_processed';
+    requesterId: string;
+    processedBy: string;
+    action: 'accepted' | 'rejected';
+}
+
+export type MqttPayload = Message | Invitation | ReadReceipt | DeliveryReceipt | TypingIndicatorPayload | ReactionPayload | FriendRequestAccepted | FriendRequest | FriendRequestProcessed;
 
 export interface MessagesState {
   [contactId: string]: Message[];

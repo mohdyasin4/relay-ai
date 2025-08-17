@@ -313,13 +313,13 @@ class MqttService {
 
             // On critical errors, attempt to reconnect manually after a delay
             if (mqttError.code === 'ECONNREFUSED' || mqttError.code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE') {
-                console.log('[MQTT] Critical connection error. Will attempt manual reconnection in 10 seconds.');
+                if (import.meta.env?.MODE === 'development') console.log('[MQTT] Critical connection error. Will attempt manual reconnection in 10 seconds.');
                 setTimeout(() => {
                     if (this.client && this.currentUser) {
-                        console.log('[MQTT] Starting manual reconnection...');
+                        if (import.meta.env?.MODE === 'development') console.log('[MQTT] Starting manual reconnection...');
                         this.client.end(true, () => {
                             this.client = null;
-                            console.log('[MQTT] Attempting manual reconnection after error...');
+                            if (import.meta.env?.MODE === 'development') console.log('[MQTT] Attempting manual reconnection after error...');
                             this.connect(this.currentUser!);
                         });
                     }
@@ -331,7 +331,7 @@ class MqttService {
         this.client.on('message', (topic, payload) => {
             try {
                 const payloadStr = payload.toString();
-                console.log(`[MQTT] Received message on topic: ${topic}, payload: ${payloadStr.substring(0, 100)}${payloadStr.length > 100 ? '...' : ''}`);
+                if (import.meta.env?.MODE === 'development') console.log(`[MQTT] Received message on topic: ${topic}, payload: ${payloadStr.substring(0, 100)}${payloadStr.length > 100 ? '...' : ''}`);
                 
                 const parsedPayload = JSON.parse(payloadStr);
                 
@@ -359,7 +359,7 @@ class MqttService {
         if (this.client) {
             this.explicitDisconnect = true;
             this.connectionStatus = 'disconnected';
-            console.log("[MQTT] Starting disconnection process...");
+            if (import.meta.env?.MODE === 'development') console.log("[MQTT] Starting disconnection process...");
             
             // Stop heartbeat timer
             this.stopHeartbeat();
@@ -447,7 +447,7 @@ class MqttService {
         const payloadString = JSON.stringify(payloadCopy);
         
         if (this.client && this.client.connected) {
-            console.log(`[MQTT] Publishing to ${topic}: ${payloadString.substring(0, 100)}${payloadString.length > 100 ? '...' : ''}`);
+            if (import.meta.env?.MODE === 'development') console.log(`[MQTT] Publishing to ${topic}: ${payloadString.substring(0, 100)}${payloadString.length > 100 ? '...' : ''}`);
             
             this.client.publish(topic, payloadString, { qos: 1 }, (err) => {
                 if (err) {
@@ -460,11 +460,11 @@ class MqttService {
                         console.warn(`[MQTT] Multiple publish failures (${this.publishQueue.length} queued). Connection may be unstable.`);
                     }
                 } else {
-                    console.log(`[MQTT] Successfully published to ${topic}`);
+                    if (import.meta.env?.MODE === 'development') console.log(`[MQTT] Successfully published to ${topic}`);
                 }
             });
         } else {
-            console.warn(`[MQTT] Client not connected. Queuing message for topic: ${topic}`);
+            if (import.meta.env?.MODE === 'development') console.warn(`[MQTT] Client not connected. Queuing message for topic: ${topic}`);
             this.publishQueue.push({ topic, payload: payloadString });
         }
     }
@@ -477,7 +477,7 @@ class MqttService {
         if (this.client && this.client.connected) {
             this._performSubscribe(topic);
         } else {
-            console.log(`[MQTT] Queued subscription for topic: ${topic}`);
+            if (import.meta.env?.MODE === 'development') console.log(`[MQTT] Queued subscription for topic: ${topic}`);
         }
     }
 
@@ -493,6 +493,7 @@ class MqttService {
      * Test MQTT connection (for debugging purposes)
      */
     public testConnection() {
+        if (import.meta.env?.MODE === 'development') {
         console.log('[MQTT] Testing connection...');
         console.log(`[MQTT] Broker URL: ${this.brokerUrl}`);
         console.log(`[MQTT] Username: ${this.baseOptions.username}`);
@@ -500,10 +501,11 @@ class MqttService {
         console.log(`[MQTT] Client connected: ${this.client?.connected || false}`);
         console.log(`[MQTT] Active subscriptions: ${Array.from(this.subscriptions).join(', ')}`);
         console.log(`[MQTT] Queued messages: ${this.publishQueue.length}`);
+        }
         
         // Try to reconnect if needed
         if (this.currentUser && !this.isConnected()) {
-            console.log('[MQTT] Attempting to reconnect...');
+            if (import.meta.env?.MODE === 'development') console.log('[MQTT] Attempting to reconnect...');
             this.checkConnection();
         }
     }

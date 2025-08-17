@@ -157,9 +157,148 @@ export class MessageService {
   }
 
   /**
- * Get messages for a chat (either direct or group)
- */
-  static async getMessages(contactId: string, isGroup: boolean = false, limit: number = 50): Promise<Message[]> {
+   * Get messages before a specific date (for pagination)
+   */
+  static async getMessagesBeforeDate(contactId: string, isGroup: boolean = false, beforeDate: Date | string, limit: number = 100): Promise<Message[]> {
+    const cacheKey = `before-${contactId}-${isGroup}-${beforeDate}-${limit}`;
+    const cached = this.messagesCache.get(cacheKey);
+    if (cached && this.isFresh(cached.ts, this.MESSAGES_TTL)) {
+      cached.hits++;
+      return cached.data;
+    }
+
+    // Check if there's already an inflight request for this key
+    if (this.messagesInflight.has(cacheKey)) {
+      return this.messagesInflight.get(cacheKey)!;
+    }
+
+    const loadPromise = this._getMessagesBeforeDate(contactId, isGroup, beforeDate, limit);
+    this.messagesInflight.set(cacheKey, loadPromise);
+
+    try {
+      const messages = await loadPromise;
+      
+      // Cache the result
+      this.evictOldEntries(this.messagesCache);
+      this.messagesCache.set(cacheKey, { data: messages, ts: Date.now(), hits: 1 });
+      
+      return messages;
+    } finally {
+      this.messagesInflight.delete(cacheKey);
+    }
+  }
+
+  private static transformDatabaseMessage(msg: any): Message {
+    // Detect AI messages for backward compatibility with old messages
+    const senderName = msg.senderName || (msg.User as any)?.name || 'Unknown';
+    const isAiMessage = msg.isAiMessage || 
+                       msg.aiSenderId || 
+                       senderName === 'Code Assistant' || 
+                       senderName === 'AI Assistant' ||
+                       senderName.includes('Assistant');
+    
+    // Determine the correct sender ID
+    let senderId = msg.senderId;
+    if (isAiMessage && msg.aiSenderId) {
+      senderId = msg.aiSenderId;
+    } else if (isAiMessage && !msg.aiSenderId) {
+      // For old AI messages without aiSenderId, use a fallback
+      senderId = 'code-assistant'; // Default AI persona ID
+    }
+
+    return {
+      type: 'chat' as const,
+      id: msg.id,
+      contactId: msg.groupId || msg.recipientId || '',
+      text: msg.text,
+      senderId: senderId,
+      senderName: senderName,
+      timestamp: msg.timestamp,
+      status: msg.status as 'sent' | 'delivered' | 'read',
+      isGroup: !!msg.groupId,
+      isForwarded: !!msg.isForwarded,
+      forwardedFromMessageId: msg.forwardedFromMessageId || undefined,
+      forwardedFromContactId: msg.forwardedFromContactId || undefined,
+      forwardedById: msg.forwardedById || undefined,
+      forwardedToContactId: msg.forwardedToContactId || undefined,
+      reactions: msg.reactions || [],
+      ...(msg.attachmenturl && { 
+        attachment: { 
+          type: 'image' as const, 
+          url: msg.attachmenturl 
+        } 
+      }),
+      ...(msg.replyToId && {
+        replyTo: {
+          id: msg.replyToId,
+          text: msg.replyToText || '',
+          senderId: msg.replyToSenderId || '',
+          senderName: msg.replyToSenderName || 'Unknown'
+        }
+      })
+    };
+  }
+
+  private static async _getMessagesBeforeDate(contactId: string, isGroup: boolean, beforeDate: Date | string, limit: number): Promise<Message[]> {
+    const supabase = createClient();
+    const { data: authData } = await supabase.auth.getUser();
+    
+    if (!authData?.user) return [];
+
+    const beforeTimestamp = typeof beforeDate === 'string' ? beforeDate : beforeDate.toISOString();
+
+    try {
+      let query = supabase
+        .from('Message')
+        .select(`
+          id,
+          text,
+          senderId,
+          aiSenderId,
+          senderName,
+          recipientId,
+          groupId,
+          status,
+          timestamp,
+          attachmenturl,
+          isAiMessage,
+          replyToId,
+          replyToText,
+          replyToSenderId,
+          replyToSenderName,
+          isForwarded,
+          forwardedFromMessageId,
+          forwardedFromContactId,
+          forwardedById,
+          forwardedToContactId,
+          reactions:Reaction(id, userId, emoji),
+          User!senderId(id, name, avatarUrl)
+        `)
+        .lt('timestamp', beforeTimestamp)
+        .order('timestamp', { ascending: false })
+        .limit(limit);
+
+      if (isGroup) {
+        query = query.eq('groupId', contactId);
+      } else {
+        query = query.or(`and(senderId.eq.${authData.user.id},recipientId.eq.${contactId}),and(senderId.eq.${contactId},recipientId.eq.${authData.user.id})`);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      const messages = (data || []).map(this.transformDatabaseMessage).reverse(); // Reverse to get chronological order
+      return messages;
+    } catch (error) {
+      console.error('Error fetching messages before date:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get messages between two users or in a group
+   */
+  static async getMessages(contactId: string, isGroup: boolean = false, limit: number = 100): Promise<Message[]> {
     const supabase = createClient();
   
   try {
@@ -207,9 +346,11 @@ export class MessageService {
         replyToText,
         replyToSenderId,
         replyToSenderName,
-        sender:User!senderId(name)
+        sender:User!senderId(name, avatarUrl)
       `)
-      .order('timestamp', { ascending: true });
+      // Fetch newest first for fast initial view, we'll sort ascending after mapping
+      .order('timestamp', { ascending: false })
+      .limit(limit);
 
     if (isGroup) {
       // For group messages, filter by groupId
@@ -225,8 +366,8 @@ export class MessageService {
         .or(`and(senderId.eq.${currentUserId},recipientId.eq.${contactId}),and(senderId.eq.${contactId},recipientId.eq.${currentUserId}),and(aiSenderId.eq.${contactId},recipientId.eq.${currentUserId}),and(senderId.eq.${currentUserId},aiSenderId.eq.${contactId})`);
     }
 
-    // Remove .limit(limit) to ensure full history is fetched when opening a chat
-
+    // We intentionally limit above for faster initial loads; older messages are fetched on scroll
+    
     const pending = (async (): Promise<Message[]> => {
       try {
         const { data: messages, error } = await query;
@@ -259,10 +400,23 @@ export class MessageService {
           }
         }
 
+        // Compute correct thread contact id for DMs (the other participant), or group id for groups
+        const resolveThreadContactId = (msg: any): string => {
+          if (msg.groupId) return msg.groupId;
+          if (currentUserId) {
+            if (msg.recipientId === currentUserId) return msg.senderId || msg.aiSenderId || '';
+            if (msg.senderId === currentUserId) return msg.recipientId || msg.aiSenderId || '';
+          }
+          // Fallbacks (should rarely hit)
+          return (msg.senderId && msg.senderId !== currentUserId)
+            ? msg.senderId
+            : (msg.recipientId && msg.recipientId !== currentUserId ? msg.recipientId : (msg.aiSenderId || ''));
+        };
+
         const mapped: Message[] = messages.map((msg: any) => ({
           type: 'chat' as const,
           id: msg.id,
-          contactId: msg.groupId || msg.recipientId || '',
+          contactId: resolveThreadContactId(msg),
           text: msg.text,
           senderId: msg.isAiMessage ? msg.aiSenderId : msg.senderId,
           senderName: msg.senderName || (msg.sender as any)?.name || 'Unknown',
@@ -290,6 +444,8 @@ export class MessageService {
             }
           })
         }));
+        // Sort ascending for UI after fetching newest-first
+        mapped.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
         this.evictOldEntries(this.messagesCache);
         this.messagesCache.set(cacheKey, { data: mapped, ts: Date.now(), hits: 1 });
@@ -550,7 +706,7 @@ export class MessageService {
           timestamp,
           attachmenturl,
           isAiMessage,
-          sender:User!senderId(name)
+          sender:User!senderId(name, avatarUrl)
         `)
         .eq('recipientId', userId)
         .neq('senderId', userId)
@@ -584,8 +740,8 @@ export class MessageService {
             status,
             timestamp,
             attachmenturl,
-            isAiMessage,
-            sender:User!senderId(name)
+                      isAiMessage,
+          sender:User!senderId(name, avatarUrl)
           `)
           .in('groupId', groupIds)
           .neq('senderId', userId)

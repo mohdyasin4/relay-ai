@@ -77,10 +77,6 @@ export const NavUser: React.FC<NavUserProps> = ({ user, onSettings, onLogout, on
                   <IconSettings />
                   Settings
                 </DropdownMenuItem>
-                <DropdownMenuItem>
-                  <IconUserCircle />
-                  Profile
-                </DropdownMenuItem>
               </DropdownMenuGroup>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={onLogout}>

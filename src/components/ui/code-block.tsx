@@ -1,8 +1,9 @@
 import { cn } from "@/lib/utils"
-import React, { useEffect, useState } from "react"
-import { codeToHtml } from "shiki"
+import React, { useEffect, useRef, useState } from "react"
 import { Button } from "./button"
 import { Check, Copy } from "lucide-react"
+import { shikiHighlighter } from "@/lib/shiki"
+import { Badge } from "./badge"
 
 export type CodeBlockProps = {
   children?: React.ReactNode
@@ -14,7 +15,7 @@ function CodeBlock({ children, className, ...props }: CodeBlockProps) {
     <div
       className={cn(
         "not-prose flex w-full flex-col overflow-clip border",
-        "border-border bg-card text-card-foreground rounded-xl",
+        "border-border bg-muted/50 dark:bg-muted/30 text-foreground rounded-xl shadow-sm",
         className
       )}
       {...props}
@@ -34,11 +35,33 @@ export type CodeBlockCodeProps = {
 function CodeBlockCode({
   code,
   language = "tsx",
-  theme = "vesper",
+  theme,
   className,
   ...props
 }: CodeBlockCodeProps) {
+  // Theme is resolved inside shiki highlighter; prop retained for API parity
+
+  const lang: string = language ?? "plaintext";
   const [highlightedHtml, setHighlightedHtml] = useState<string | null>(null)
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const [isVisible, setIsVisible] = useState(false)
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0]
+        if (entry && entry.isIntersecting) {
+          setIsVisible(true)
+          observer.disconnect()
+        }
+      },
+      { root: null, rootMargin: "200px", threshold: 0.01 }
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
 
   useEffect(() => {
     async function highlight() {
@@ -47,26 +70,40 @@ function CodeBlockCode({
         return
       }
 
-      const html = await codeToHtml(code, { lang: language, theme })
-      setHighlightedHtml(html)
+      try {
+        if (!isVisible) return
+        const html = await shikiHighlighter.highlight(code, lang)
+        setHighlightedHtml(html)
+      } catch (error) {
+        console.error('Failed to highlight code:', error)
+        // Fallback to plain code
+        setHighlightedHtml(`<pre><code>${code.replace(/[&<>"']/g, (m) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}</code></pre>`)
+      }
     }
     highlight()
-  }, [code, language, theme])
+  }, [code, lang, theme, isVisible])
 
   const classNames = cn(
-    "w-full overflow-x-auto text-[13px] [&>pre]:px-4 [&>pre]:py-4",
+    "w-full px-4 dark:bg-black/30 bg-muted/50 overflow-x-auto text-[13px] [&>pre]:px-4 [&>pre]:py-4 font-mono [&_.line]:font-mono [&_code]:font-mono",
     className
   )
 
   // SSR fallback: render plain code if not hydrated yet
+  const shikiFontStyle: React.CSSProperties = {
+    // Force JetBrains Mono for Shiki output
+    ["--shiki-font-family" as any]: "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
+  }
+
   return highlightedHtml ? (
     <div
+      ref={containerRef}
       className={classNames}
+      style={shikiFontStyle}
       dangerouslySetInnerHTML={{ __html: highlightedHtml }}
       {...props}
     />
   ) : (
-    <div className={classNames} {...props}>
+    <div ref={containerRef} className={classNames} style={shikiFontStyle} {...props}>
       <pre>
         <code>{code}</code>
       </pre>
@@ -103,18 +140,15 @@ export type CodeBlockHeaderProps = {
   className?: string
 }
 
-function CodeBlockHeader({ language, filename, rightSlot, handleCopy, copied, setCopied, className }: CodeBlockHeaderProps) {
-useEffect(() => {
-  console.log("Copied status changed:", copied);
-}, [copied]);
+function CodeBlockHeader({ language, filename, rightSlot, handleCopy, copied, setCopied: _setCopied, className }: CodeBlockHeaderProps) {
 
   return (
     <div className={cn("border-border border-b py-2 pr-2 pl-4 flex items-center justify-between", className)}>
       <div className="flex items-center gap-2">
         {language && (
-          <div className="bg-primary/10 text-primary rounded px-2 py-1 text-xs font-medium">
+          <Badge variant="secondary" className="rounded px-2 py-1 text-xs font-medium">
             {language}
-          </div>
+          </Badge>
         )}
         {filename && <span className="text-muted-foreground text-sm">{filename}</span>}
       </div>

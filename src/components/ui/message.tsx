@@ -8,13 +8,16 @@ import {
 import { cn } from "@/lib/utils"
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
 import { Markdown } from "./markdown"
+import { Badge } from "@/components/ui/badge"
+import { getSenderToneClasses } from "@/utils/colorUtils"
 
 export type MessageProps = {
   children: React.ReactNode
+  theme?: string
   className?: string
 } & React.HTMLProps<HTMLDivElement>
 
-const Message = ({ children, className, ...props }: MessageProps) => (
+const Message = ({ children,theme, className, ...props }: MessageProps) => (
   <div className={cn("flex gap-3", className)} {...props}>
     {children}
   </div>
@@ -48,6 +51,7 @@ const MessageAvatar = ({
 export type MessageContentProps = {
   children: React.ReactNode
   markdown?: boolean
+  theme?: string
   copied?: boolean
   handleCopy?: (text: string) => void
 
@@ -59,32 +63,20 @@ export type MessageContentProps = {
 const MessageContent = ({
   children,
   markdown,
+  theme,
   copied, 
   handleCopy,
   className,
   ...props
 }: MessageContentProps) => {
   const classNames = cn(
-    "rounded-lg p-2 text-foreground bg-secondary prose break-words whitespace-normal",
+    "rounded-lg p-2 text-foreground bg-secondary prose prose-headings:text-foreground prose-p:text-foreground prose-strong:text-foreground prose-em:text-foreground prose-code:text-foreground prose-pre:text-foreground prose-blockquote:text-foreground prose-li:text-foreground prose-a:text-foreground break-words whitespace-normal inter-double-storey",
     className
   )
 
   // Mention coloring and hover-card rendering for links of the form [@Name](mention:ID)
-  const hashColorIndex = (key: string, modulo = 8) => {
-    let hash = 5381
-    for (let i = 0; i < key.length; i++) hash = (hash * 33) ^ key.charCodeAt(i)
-    return Math.abs(hash) % modulo
-  }
-  const palette = [
-    { bg: "bg-blue-200 dark:bg-blue-800", text: "text-blue-950 dark:text-blue-50" },
-    { bg: "bg-green-200 dark:bg-green-800", text: "text-green-950 dark:text-green-50" },
-    { bg: "bg-amber-200 dark:bg-amber-800", text: "text-amber-950 dark:text-amber-50" },
-    { bg: "bg-purple-200 dark:bg-purple-800", text: "text-purple-950 dark:text-purple-50" },
-    { bg: "bg-rose-200 dark:bg-rose-800", text: "text-rose-950 dark:text-rose-50" },
-    { bg: "bg-cyan-200 dark:bg-cyan-800", text: "text-cyan-950 dark:text-cyan-50" },
-    { bg: "bg-teal-200 dark:bg-teal-800", text: "text-teal-950 dark:text-teal-50" },
-    { bg: "bg-indigo-200 dark:bg-indigo-800", text: "text-indigo-950 dark:text-indigo-50" },
-  ] as const
+  // Deprecated hashColorIndex retained for reference only
+  // Deprecated palette replaced by shared color util to ensure parity
 
   const mentionComponents: React.ComponentProps<typeof Markdown>["components"] = {
     a: (anchorProps) => {
@@ -92,12 +84,15 @@ const MessageContent = ({
       const url = typeof href === "string" ? href : ""
       if (url.startsWith("mention:")) {
         const id = decodeURIComponent(url.slice("mention:".length))
-        const color = palette[hashColorIndex(id)]
+        const { text: toneText, bg: toneBg } = getSenderToneClasses(id)
         const info = (props as any).resolveMentionContact?.(id)
         const tag = (
-          <span className={cn("inline-block rounded px-1 font-semibold", color.bg, color.text)}>
-            {children}
-          </span>
+          <Badge 
+            variant="secondary" 
+            className={cn("inline-flex items-center gap-1 px-2.5 py-[3px] text-[11px] font-semibold rounded-full shadow-sm hover:shadow transition-shadow duration-150 ring-1 ring-border/40", toneText, toneBg)}
+          >
+            @{children}
+          </Badge>
         )
         if (!info) return tag
         return (
@@ -124,12 +119,15 @@ const MessageContent = ({
     },
   }
 
+  // Filter out props that shouldn't be passed to DOM elements
+  const { setCopied, resolveMentionContact, ...domProps } = props;
+
   return markdown ? (
-    <Markdown className={classNames} copied={copied}  handleCopy={handleCopy} components={{ ...props.components, ...mentionComponents }} {...props}>
+    <Markdown className={classNames} theme={theme} copied={copied} handleCopy={handleCopy} components={{ ...props.components, ...mentionComponents }} {...domProps}>
       {children as string}
     </Markdown>
   ) : (
-    <div className={classNames} {...props}>
+    <div className={classNames} {...domProps}>
       {children}
     </div>
   )

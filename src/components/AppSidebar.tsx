@@ -1,4 +1,5 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
+import { motion } from 'motion/react';
 import type { Contact, MessagesState, User } from '../types';
 import {
   Sidebar as ShSidebar,
@@ -62,7 +63,8 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
   ...sidebarProps
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
-  // const userMenuRef = useRef<HTMLDivElement>(null);
+  const prevUnreadRef = useRef<Record<string, number>>({});
+  const lastClickTime = useRef<number>(0);
 
   useEffect(() => {
     const handleClickOutside = (_event: MouseEvent) => {
@@ -77,6 +79,135 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
     const lower = searchTerm.toLowerCase();
     return contacts.filter((c) => c.name.toLowerCase().includes(lower));
   }, [contacts, searchTerm]);
+
+  useEffect(() => {
+    prevUnreadRef.current = unreadCounts;
+  }, [unreadCounts]);
+
+  // Optimized contact selection handler
+  const handleContactClick = useCallback((contactId: string) => {
+    const now = Date.now();
+    // Prevent rapid clicks
+    if (now - lastClickTime.current < 300) {
+      return;
+    }
+    lastClickTime.current = now;
+    
+    // Call the parent handler
+    onSelectContact(contactId);
+  }, [onSelectContact]);
+
+  // Memoize contact groups to prevent unnecessary re-renders
+  const contactGroups = useMemo(() => {
+    const pinned = filteredContacts.filter(c => !!c.isPinned);
+    const unread = filteredContacts.filter(c => !c.isPinned && (unreadCounts[c.id] || 0) > 0);
+    const others = filteredContacts.filter(c => !c.isPinned && (unreadCounts[c.id] || 0) === 0);
+    
+    return { pinned, unread, others };
+  }, [filteredContacts, unreadCounts]);
+
+  // Memoize contact list rendering
+  const renderContactList = useCallback((list: Contact[]) => (
+    <ul>
+      {list.map((contact) => {
+        const contactMessages = messages[contact.id] || [];
+        const lastMessage = contactMessages[contactMessages.length - 1];
+        const isSelected = contact.id === selectedContactId;
+        const unreadCount = unreadCounts[contact.id] || 0;
+        const isUnread = unreadCount > 0;
+        const prevUnread = prevUnreadRef.current[contact.id] || 0;
+        const trend = unreadCount > prevUnread ? 'up' : unreadCount < prevUnread ? 'down' : 'same';
+
+        return (
+          <li key={contact.id} className="group/contact relative">
+            <motion.button
+              onClick={() => handleContactClick(contact.id)}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              whileHover={{ y: -1, scale: 1.01 }}
+              transition={{ duration: 0.18, ease: 'easeOut' }}
+              className={`w-full text-left p-3 flex items-start gap-3 cursor-pointer rounded-xl border shadow-sm ${
+                isSelected
+                  ? 'bg-primary/10 border-primary/40 text-foreground'
+                  : isUnread
+                  ? 'bg-muted/60 border-border/50'
+                  : 'hover:bg-muted/50 border-transparent'
+              }`}
+              aria-current={isSelected}
+            >
+              <div className="relative">
+                <GeneratedAvatar
+                  name={contact.name}
+                  isGroup={contact.isGroup}
+                  memberIds={contact.memberIds}
+                  creatorId={contact.creatorId}
+                  allContacts={contacts}
+                  currentUser={user}
+                  showOnlineStatus={!contact.isGroup}
+                  onlineStatus={contact.isAi ? 'online' : 'online'}
+                />
+              </div>
+              <div className="flex-1 overflow-hidden">
+                <div className="flex items-center">
+                  {contact.isPinned && (
+                    <Pin  className="w-4 h-4 mr-1.5 text-amber-500 fill-amber-500 flex-shrink-0" />
+                  )}
+                  <h2 className={`font-semibold truncate text-base ${isSelected ? '' : ''}`}>{contact.name}</h2>
+                </div>
+                <p className={`text-sm truncate flex-1 pt-1 ${isUnread ? 'font-medium text-foreground' : 'text-muted-foreground'}`}>
+                  {typingIndicators[contact.id] && Object.keys(typingIndicators[contact.id]).length > 0 ? (
+                    <span className="flex items-center gap-2">
+                          <span className="italic">{Object.values(typingIndicators[contact.id])[0]} is typing</span>
+                    </span>
+                  ) : lastMessage?.isForwarded ? (
+                    'Forwarded Message'
+                  ) : lastMessage?.attachment && !lastMessage.isForwarded ? (
+                    '📷 Image'
+                  ) : !lastMessage?.isForwarded && lastMessage?.text ? (
+                    lastMessage.text
+                  ) : !lastMessage ? (
+                    'Start a conversation...'
+                  ) : (
+                    ''
+                  )}
+                </p>
+              </div>
+              <div className="flex flex-col items-end space-y-1.5 flex-shrink-0">
+                <span className={`text-xs ${isUnread ? 'text-primary font-bold' : 'text-muted-foreground'}`}>
+                  {lastMessage ? DateUtils.formatSidebarTime(lastMessage.timestamp) : ''}
+                </span>
+                {unreadCount > 0 ? (
+                  <motion.span
+                    key={`badge-${unreadCount}`}
+                    initial={{ scale: 0.9, opacity: 0 }}
+                    animate={trend === 'up' ? { scale: [1, 1.15, 1], opacity: 1 } : trend === 'down' ? { scale: [1, 0.9, 1], opacity: 1 } : { scale: 1, opacity: 1 }}
+                    transition={{ type: 'spring', stiffness: 400, damping: 18 }}
+                    className="bg-primary text-primary-foreground text-xs font-bold rounded-full min-w-5 h-5 px-1 flex items-center justify-center shadow-sm ring-1 ring-primary/30"
+                  >
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </motion.span>
+                ) : (
+                  <div className="h-5 w-5" />
+                )}
+              </div>
+            </motion.button>
+            <div
+              onClick={(e) => {
+                e.stopPropagation();
+                onTogglePin(contact.id);
+              }}
+              className={`absolute right-2 bottom-2  p-1.5 rounded-xl transition-opacity opacity-0 group-hover/contact:opacity-100 focus:opacity-100`}
+              aria-label={contact.isPinned ? 'Unpin contact' : 'Pin contact'}
+            >
+              <motion.span whileTap={{ scale: 0.85 }}>
+                <Pin className={`w-4 h-4  transition-all duration-200 ${contact.isPinned ? 'text-amber-500 fill-amber-500' : 'text-muted-foreground'}`} />
+              </motion.span>
+            </div>
+          </li>
+        );
+      })}
+    </ul>
+  ), [messages, selectedContactId, unreadCounts, typingIndicators, contacts, user, handleContactClick, onTogglePin]);
 
   return (
     <ShSidebar collapsible="offcanvas" variant="sidebar" className="md:relative sidebar-mobile-full" {...sidebarProps}>
@@ -106,7 +237,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
         <SidebarMenu>
           <SidebarMenuItem>
             <div className="px-2 pt-2">
-              <Button onClick={onNewGroup} className="w-full hidden md:flex" aria-label="Start a new chat">
+              <Button onClick={onNewGroup} className="w-full hidden md:flex text-background" aria-label="Start a new chat">
                 <PlusIcon className="w-5 h-5 inline-block mr-1" />
                 New Chat
               </Button>
@@ -122,7 +253,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
               placeholder="Search or start new chat"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-10"
+              className="pl-10 rounded-xl"
               aria-label="Search contacts"
             />
             {searchTerm && (
@@ -155,119 +286,24 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
             </div>
           ) : filteredContacts.length > 0 ? (
             <>
-              {(() => {
-                const pinned = filteredContacts.filter(c => !!c.isPinned);
-                const unread = filteredContacts.filter(c => !c.isPinned && (unreadCounts[c.id] || 0) > 0);
-                const others = filteredContacts.filter(c => !c.isPinned && (unreadCounts[c.id] || 0) === 0);
-
-                const renderList = (list: Contact[]) => (
-                  <ul>
-                    {list.map((contact) => {
-                const contactMessages = messages[contact.id] || [];
-                const lastMessage = contactMessages[contactMessages.length - 1];
-                const isSelected = contact.id === selectedContactId;
-                const unreadCount = unreadCounts[contact.id] || 0;
-                const isUnread = unreadCount > 0;
-
-                      return (
-                        <li key={contact.id} className="group relative">
-                    <button
-                      onClick={() => onSelectContact(contact.id)}
-                      className={`w-full text-left p-3 flex items-start gap-3 rounded-lg transition-colors duration-200 ${
-                        isSelected ? 'bg-accent text-accent-foreground' : 'hover:bg-muted'
-                      }`}
-                      aria-current={isSelected}
-                    >
-                      <div className="relative">
-                        <GeneratedAvatar
-                          name={contact.name}
-                          isGroup={contact.isGroup}
-                          memberIds={contact.memberIds}
-                          creatorId={contact.creatorId}
-                          allContacts={contacts}
-                          currentUser={user}
-                          showOnlineStatus={!contact.isGroup}
-                          onlineStatus={contact.isAi ? 'online' : 'online'}
-                        />
-                      </div>
-                      <div className="flex-1 overflow-hidden">
-                        <div className="flex items-center">
-                          {contact.isPinned && (
-                            <Pin fill={contact.isPinned ? 'currentColor' : 'none'} className="w-4 h-4 mr-1.5 text-primary flex-shrink-0" />
-                          )}
-                          <h2 className={`font-semibold truncate text-base ${isSelected ? '' : ''}`}>{contact.name}</h2>
-                        </div>
-                        <p className={`text-sm truncate flex-1 pt-1 ${isUnread ? 'font-bold' : 'text-muted-foreground'}`}>
-                          {typingIndicators[contact.id] && Object.keys(typingIndicators[contact.id]).length > 0 ? (
-                            <span className="flex items-center gap-2">
-                                  <span className="italic">{Object.values(typingIndicators[contact.id])[0]} is typing</span>
-                            </span>
-                          ) : lastMessage?.isForwarded ? (
-                            'Forwarded Message'
-                          ) : lastMessage?.attachment && !lastMessage.isForwarded ? (
-                            '📷 Image'
-                          ) : !lastMessage?.isForwarded && lastMessage?.text ? (
-                            lastMessage.text
-                          ) : !lastMessage ? (
-                            'Start a conversation...'
-                          ) : (
-                            ''
-                          )}
-                        </p>
-                      </div>
-                      <div className="flex flex-col items-end space-y-1.5 flex-shrink-0">
-                        <span className={`text-xs ${isUnread ? 'text-primary font-bold' : 'text-muted-foreground'}`}>
-                          {lastMessage ? DateUtils.formatSidebarTime(lastMessage.timestamp) : ''}
-                        </span>
-                        {unreadCount > 0 ? (
-                          <span className="bg-primary text-foreground text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center">
-                            {unreadCount > 9 ? '9+' : unreadCount}
-                          </span>
-                        ) : (
-                          <div className="h-5 w-5" />
-                        )}
-                      </div>
-                    </button>
-                    <Button
-                      variant={'ghost'}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onTogglePin(contact.id);
-                      }}
-                      className={`absolute right-2 bottom-2 p-1.5 rounded-xl transition-opacity opacity-0 group-hover:opacity-100 focus:opacity-100`}
-                      aria-label={contact.isPinned ? 'Unpin contact' : 'Pin contact'}
-                    >
-                      <Pin className={`w-5 h-5 ${contact.isPinned ? 'text-primary' : 'text-muted-foreground'}`} fill={contact.isPinned ? 'currentColor' : 'none'} />
-                    </Button>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                );
-
-                return (
-                  <>
-                    {pinned.length > 0 && (
-                      <SidebarGroup>
-                        <SidebarGroupLabel>Pinned</SidebarGroupLabel>
-                        <SidebarGroupContent>{renderList(pinned)}</SidebarGroupContent>
-                      </SidebarGroup>
-                    )}
-                    {unread.length > 0 && (
-                      <SidebarGroup>
-                        <SidebarGroupLabel>Unread</SidebarGroupLabel>
-                        <SidebarGroupContent>{renderList(unread)}</SidebarGroupContent>
-                      </SidebarGroup>
-                    )}
-                    {others.length > 0 && (
-                      <SidebarGroup>
-                        <SidebarGroupLabel>All Chats</SidebarGroupLabel>
-                        <SidebarGroupContent>{renderList(others)}</SidebarGroupContent>
-                      </SidebarGroup>
-                    )}
-                  </>
-                );
-              })()}
+              {contactGroups.pinned.length > 0 && (
+                <SidebarGroup>
+                  <SidebarGroupLabel>Pinned</SidebarGroupLabel>
+                  <SidebarGroupContent>{renderContactList(contactGroups.pinned)}</SidebarGroupContent>
+                </SidebarGroup>
+              )}
+              {contactGroups.unread.length > 0 && (
+                <SidebarGroup>
+                  <SidebarGroupLabel>Unread</SidebarGroupLabel>
+                  <SidebarGroupContent>{renderContactList(contactGroups.unread)}</SidebarGroupContent>
+                </SidebarGroup>
+              )}
+              {contactGroups.others.length > 0 && (
+                <SidebarGroup>
+                  <SidebarGroupLabel>All Chats</SidebarGroupLabel>
+                  <SidebarGroupContent>{renderContactList(contactGroups.others)}</SidebarGroupContent>
+                </SidebarGroup>
+              )}
             </>
           ) : (
             <div className="text-center py-10 px-4">

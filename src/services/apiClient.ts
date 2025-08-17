@@ -63,7 +63,7 @@ export class ApiClient {
           id,
           isPinned,
           contactUserId,
-          contactUser:User!contactUserId(id, name, status)
+          contactUser:User!contactUserId(id, name, email, avatarUrl, status)
         `)
         .eq('userId', authData.user.id);
         
@@ -74,6 +74,8 @@ export class ApiClient {
       return (data || []).map(contact => ({
         id: contact.contactUserId,
         name: contact.contactUser.name,
+        email: contact.contactUser.email || '',
+        avatarUrl: contact.contactUser.avatarUrl || '',
         status: contact.contactUser.status,
         isPinned: contact.isPinned,
         isAi: false,

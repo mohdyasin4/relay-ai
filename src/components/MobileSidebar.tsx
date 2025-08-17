@@ -1,12 +1,13 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useCallback } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import type { Contact, MessagesState, User } from '../types';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import GeneratedAvatar from './GeneratedAvatar';
-import { Search, X, Plus, Phone, User as UserIcon, Settings, MessageCircle, MessagesSquare } from 'lucide-react';
+import { Search, Plus, MessagesSquare } from 'lucide-react';
 import { DateUtils } from '@/utils/dateUtils';
-import { Popover, PopoverTrigger } from './ui/popover';
-import { PopoverContent } from '@radix-ui/react-popover';
+// Popover imports reserved for future quick actions
+// import { Popover, PopoverTrigger } from './ui/popover';
 import NavUser from './NavUser';
 import { SidebarProvider } from './ui/sidebar';
 
@@ -41,7 +42,7 @@ export const MobileSidebar: React.FC<MobileSidebarProps> = ({
   onFriendRequests,
   typingIndicators,
   pendingFriendRequestsCount = 0,
-  onClose,
+  // onClose,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -51,14 +52,56 @@ export const MobileSidebar: React.FC<MobileSidebarProps> = ({
     return contacts.filter((c) => c.name.toLowerCase().includes(lower));
   }, [contacts, searchTerm]);
 
+  // Long-press to pin/unpin (mobile)
+  const [pressTimer, setPressTimer] = useState<number | null>(null);
+  const handlePressStart = useCallback((contactId: string) => {
+    if (pressTimer) window.clearTimeout(pressTimer);
+    const t = window.setTimeout(() => onTogglePin(contactId), 500);
+    setPressTimer(t);
+  }, [pressTimer, onTogglePin]);
+  const handlePressEnd = useCallback(() => {
+    if (pressTimer) {
+      window.clearTimeout(pressTimer);
+      setPressTimer(null);
+    }
+  }, [pressTimer]);
+
   // Get recent contacts for horizontal avatar row
   const recentContacts = useMemo(() => {
     return contacts.slice(0, 8); // Show first 8 contacts
   }, [contacts]);
 
+  // Simple edge-swipe to close the mobile sidebar when on the list screen
+  const touchStartX = React.useRef<number | null>(null)
+  const edgeSwipeThreshold = 24 // px from left edge
+  const minSwipeDistance = 50
+
+  const onTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    const x = e.touches?.[0]?.clientX ?? 0
+    // Only start tracking swipes from very left edge (avoid accidental drags)
+    if (x <= edgeSwipeThreshold) touchStartX.current = x
+  }
+  const onTouchMove = (_e: React.TouchEvent<HTMLDivElement>) => {
+    if (touchStartX.current == null) return
+    // Optionally: visual feedback could be implemented here
+  }
+  const onTouchEnd = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (touchStartX.current == null) return
+    const endX = e.changedTouches?.[0]?.clientX ?? 0
+    const delta = endX - touchStartX.current
+    touchStartX.current = null
+    if (delta > minSwipeDistance && typeof window !== 'undefined') {
+      // Go back to chat list close behavior via hash change
+      // Parent manages showing/hiding this component; we just hint via location
+      if (typeof history !== 'undefined' && history.length > 0) {
+        history.back()
+      }
+    }
+  }
+
   return (
     <SidebarProvider>
-    <div className="fixed inset-0 z-50 bg-background flex flex-col">
+    <div className="fixed inset-0 z-50 bg-background flex flex-col" onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}>
       {/* Header */}
       <div className="flex items-center justify-between p-4 border-b">
         <div className="flex items-center gap-3">
@@ -144,6 +187,7 @@ export const MobileSidebar: React.FC<MobileSidebarProps> = ({
       <div className="flex-1 overflow-y-auto">
         {filteredContacts.length > 0 ? (
           <div className="space-y-1">
+            <AnimatePresence initial={false}>
             {filteredContacts.map((contact) => {
               const contactMessages = messages[contact.id] || [];
               const lastMessage = contactMessages[contactMessages.length - 1];
@@ -152,12 +196,19 @@ export const MobileSidebar: React.FC<MobileSidebarProps> = ({
               const isUnread = unreadCount > 0;
 
               return (
-                <div
+                <motion.div
                   key={contact.id}
-                  className={`group relative p-4 hover:bg-muted/50 transition-colors ${
+                  initial={{ x: -24, opacity: 0 }}
+                  animate={{ x: 0, opacity: 1 }}
+                  exit={{ x: 24, opacity: 0 }}
+                  transition={{ type: 'spring', stiffness: 280, damping: 26 }}
+                  className={`group relative p-4 hover:bg-muted/60 transition-colors ${
                     isSelected ? 'bg-accent' : ''
                   }`}
                   onClick={() => onSelectContact(contact.id)}
+                  onPointerDown={() => handlePressStart(contact.id)}
+                  onPointerUp={handlePressEnd}
+                  onPointerLeave={handlePressEnd}
                 >
                   <div className="flex items-center gap-3">
                     {/* Avatar */}
@@ -174,9 +225,14 @@ export const MobileSidebar: React.FC<MobileSidebarProps> = ({
                         className="w-12 h-12"
                       />
                       {unreadCount > 0 && (
-                        <div className="absolute -top-1 -right-1 bg-primary text-primary-foreground text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                        <motion.div
+                          initial={{ scale: 0.9, opacity: 0 }}
+                          animate={{ scale: 1, opacity: 1 }}
+                          transition={{ type: 'spring', stiffness: 420, damping: 18 }}
+                          className="absolute -top-1 -right-1 bg-primary text-primary-foreground text-xs rounded-full w-5 h-5 flex items-center justify-center"
+                        >
                           {unreadCount > 9 ? '9+' : unreadCount}
-                        </div>
+                        </motion.div>
                       )}
                     </div>
 
@@ -210,21 +266,12 @@ export const MobileSidebar: React.FC<MobileSidebarProps> = ({
                     </div>
                   </div>
 
-                  {/* Pin Button */}
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onTogglePin(contact.id);
-                    }}
-                    className="absolute right-2 top-1/2 transform -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity"
-                  >
-                    <div className={`w-2 h-2 rounded-full ${contact.isPinned ? 'bg-primary' : 'bg-muted-foreground'}`} />
-                  </Button>
-                </div>
+                  {/* Hint: long-press to pin/unpin */}
+                  <div className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity">Long press to pin</div>
+                </motion.div>
               );
             })}
+            </AnimatePresence>
           </div>
         ) : (
           <div className="text-center py-10 px-4">

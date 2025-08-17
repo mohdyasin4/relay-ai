@@ -172,13 +172,13 @@ export function SignupForm({
 
   return (
     <form 
-      className={cn("flex flex-col gap-8", className)} 
+      className={cn("flex max-w-md mx-auto flex-col gap-4", className)} 
       onSubmit={handleSubmit} 
       noValidate
       {...props}
     >
       <motion.div 
-        className="flex flex-col items-center gap-3 text-center"
+        className="flex flex-col items-center gap-2 text-center"
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, delay: 0.1 }}
@@ -203,14 +203,11 @@ export function SignupForm({
       
       <div className="grid gap-4">
         <motion.div 
-          className="grid gap-3"
+          className="grid gap-2"
           initial={{ opacity: 0, x: -10 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.5, delay: 0.2 }}
         >
-          <Label htmlFor="name" className="text-foreground font-semibold text-sm">
-            Full Name
-          </Label>
           <div className="relative group">
             <User className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4 group-focus-within:text-[#3B37FE] transition-colors z-10 pointer-events-none" />
             <Input 
@@ -240,14 +237,11 @@ export function SignupForm({
         </motion.div>
         
         <motion.div 
-          className="grid gap-3"
+          className="grid gap-2"
           initial={{ opacity: 0, x: -10 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.5, delay: 0.25 }}
         >
-          <Label htmlFor="username" className="text-foreground font-semibold text-sm">
-            Username
-          </Label>
           <div className="relative group">
             <User className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4 group-focus-within:text-[#3B37FE] transition-colors z-10 pointer-events-none" />
             <Input 
@@ -277,14 +271,11 @@ export function SignupForm({
         </motion.div>
         
         <motion.div 
-          className="grid gap-3"
+          className="grid gap-2"
           initial={{ opacity: 0, x: -10 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.5, delay: 0.3 }}
         >
-          <Label htmlFor="email" className="text-foreground font-semibold text-sm">
-            Email Address
-          </Label>
           <div className="relative group">
             <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4 group-focus-within:text-[#3B37FE] transition-colors z-10 pointer-events-none" />
             <Input 
@@ -314,14 +305,11 @@ export function SignupForm({
         </motion.div>
         
         <motion.div 
-          className="grid gap-3"
+          className="grid gap-2"
           initial={{ opacity: 0, x: -10 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.5, delay: 0.4 }}
         >
-          <Label htmlFor="password" className="text-foreground font-semibold text-sm">
-            Password
-          </Label>
           <div className="relative group">
             <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4 group-focus-within:text-[#3B37FE] transition-colors z-10 pointer-events-none" />
             <Input 
@@ -407,14 +395,11 @@ export function SignupForm({
         </motion.div>
         
         <motion.div 
-          className="grid gap-3"
+          className="grid gap-2"
           initial={{ opacity: 0, x: -10 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.5, delay: 0.45 }}
         >
-          <Label htmlFor="confirmPassword" className="text-foreground font-semibold text-sm">
-            Confirm Password
-          </Label>
           <div className="relative group">
             <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4 group-focus-within:text-[#3B37FE] transition-colors z-10 pointer-events-none" />
             <Input 
@@ -470,14 +455,12 @@ export function SignupForm({
           animate={{ opacity: 1 }}
           transition={{ duration: 0.5, delay: 0.6 }}
         >
-          <div className="absolute inset-0 flex items-center">
-            <span className="w-full border-t border-border" />
-          </div>
-          <div className="relative flex justify-center text-xs uppercase">
-            <span className="px-4 text-muted-foreground font-medium tracking-wider">
-              Or continue with
-            </span>
-          </div>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+  <span className="flex-1 border-t" />
+  Or
+  <span className="flex-1 border-t" />
+</div>
+
         </motion.div>
         
         <motion.div

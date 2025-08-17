@@ -24,6 +24,7 @@ export type UseTextStreamResult = {
   startStreaming: () => void
   pause: () => void
   resume: () => void
+  // optional UI cue for the typing cursor
 }
 
 function useTextStream({

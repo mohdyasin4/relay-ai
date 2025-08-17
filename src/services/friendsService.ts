@@ -22,6 +22,26 @@ export class FriendsService {
   private static CONTACTS_TTL_MS = 15_000;
 
   /**
+   * Get count of pending friend requests for a user
+   */
+  static async getPendingFriendRequestsCount(userId: string): Promise<number> {
+    const supabase = createClient();
+    
+    const { count, error } = await supabase
+      .from('FriendRequest')
+      .select('*', { count: 'exact', head: true })
+      .eq('receiverId', userId)
+      .eq('status', 'pending');
+
+    if (error) {
+      console.error('Error getting pending friend requests count:', error);
+      return 0;
+    }
+
+    return count || 0;
+  }
+
+  /**
    * Get all friend requests for a user (both sent and received)
    */
   static async getFriendRequests(userId: string): Promise<{

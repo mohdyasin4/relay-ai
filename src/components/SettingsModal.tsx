@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import GeneratedAvatar from './GeneratedAvatar';
-import type { User, Theme, Contact } from '../types';
+import type { User, Contact } from '../types';
 import {
   Dialog,
   DialogContent,
@@ -17,47 +17,150 @@ import { createClient } from '@/lib/supabase/client';
 import { uploadAttachment } from '@/utils/storageUtils';
 import { cn } from '@/lib/utils';
 import { useTheme } from "@/components/theme-provider"
+import { motion } from "motion/react";
+import { cookies } from "@/lib/cookies";
 
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
   user: User;
   onUserUpdate: (user: User) => void;
-  theme: Theme;
-  onThemeChange: (theme: Theme) => void;
   aiPersonas: Contact[];
   contacts: Contact[];
   onToggleAiContact: (contactId: string, enable: boolean) => void;
 }
 
-const ThemeSelector: React.FC<{
-  theme: Theme;
-  onThemeChange: (theme: Theme) => void;
-}> = ({ theme, onThemeChange }) => {
-  const themes = [
-    { id: 'light' as Theme, name: 'Light', preview: 'bg-gradient-to-b from-slate-100 to-white' },
-    { id: 'dark' as Theme, name: 'Dark', preview: 'bg-gradient-to-b from-slate-900 to-slate-800' },
-  ];
+const ThemeSelector: React.FC = () => {
+  const { theme, setTheme } = useTheme();
+  
+  const handleThemeChange = (newTheme: 'light' | 'dark' | 'system') => {
+    setTheme(newTheme);
+    cookies.set('vite-ui-theme', newTheme, { expires: 365 });
+  };
 
   return (
     <div className="space-y-4">
       <Label className="text-base font-semibold">Appearance</Label>
-      <div className="flex gap-4">
-        {themes.map((t) => (
-          <button
-            key={t.id}
-            onClick={() => onThemeChange(t.id)}
-            className={cn(
-              'flex flex-col items-center p-3 rounded-xl border-2 w-32 transition-all',
-              theme === t.id
-                ? 'border-primary shadow-lg scale-[1.03]'
-                : 'border-muted hover:border-primary/50'
-            )}
-          >
-            <div className={cn('w-full h-20 rounded-lg border', t.preview)}></div>
-            <span className="mt-2 text-sm font-medium">{t.name}</span>
-          </button>
-        ))}
+      <div className="grid grid-cols-3 gap-3">
+        <Button
+          variant="ghost"
+          onClick={() => handleThemeChange('light')}
+          className={`relative h-28 rounded-xl border overflow-hidden transition-colors ${theme === 'light' ? 'border-primary ring-2 ring-primary/30' : 'border-border hover:bg-card/50'}`}
+          aria-pressed={theme === 'light'}
+        >
+          <img src="/images/light.svg" alt="Light preview" loading="eager" fetchPriority="high" decoding="sync" className="hover:scale-105 transition-all duration-300 absolute inset-0 h-full w-full object-cover" />
+          <div className="absolute inset-0 rounded-xl bg-gradient-to-br from-foreground/5 to-transparent pointer-events-none"></div>
+          {theme === 'light' && (
+            <motion.span
+              initial={{ scale: 0.8, opacity: 0, y: 6 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              transition={{ duration: 0.25 }}
+              className="absolute bottom-2 right-2 size-6 rounded-full bg-primary text-primary-foreground grid place-items-center shadow-sm"
+            >
+              <motion.svg
+                viewBox="0 0 24 24"
+                className="w-3 h-3"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.2 }}
+              >
+                <motion.path
+                  d="M20 6L9 17l-5-5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  initial={{ strokeDasharray: "32 32", strokeDashoffset: 32 }}
+                  animate={{ strokeDashoffset: 0 }}
+                  transition={{ duration: 0.35, ease: "easeInOut", delay: 0.05 }}
+                />
+              </motion.svg>
+            </motion.span>
+          )}
+        </Button>
+
+        <Button
+          variant="ghost"
+          onClick={() => handleThemeChange('dark')}
+          className={`relative h-28 rounded-xl border overflow-hidden transition-colors ${theme === 'dark' ? 'border-primary ring-2 ring-primary/30' : 'border-border hover:bg-card/50'}`}
+          aria-pressed={theme === 'dark'}
+        >
+          <img src="/images/dark.svg" alt="Dark preview" loading="eager" fetchPriority="high" decoding="sync" className="hover:scale-105 transition-all duration-300 absolute inset-0 h-full w-full object-cover" />
+          <div className="absolute inset-0 rounded-xl bg-gradient-to-br from-foreground/5 to-transparent pointer-events-none"></div>
+          {theme === 'dark' && (
+            <motion.span
+              initial={{ scale: 0.8, opacity: 0, y: 6 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              transition={{ duration: 0.25 }}
+              className="absolute bottom-2 right-2 size-6 rounded-full bg-primary text-primary-foreground grid place-items-center shadow-sm"
+            >
+              <motion.svg
+                viewBox="0 0 24 24"
+                className="w-3 h-3"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.2 }}
+              >
+                <motion.path
+                  d="M20 6L9 17l-5-5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  initial={{ strokeDasharray: "32 32", strokeDashoffset: 32 }}
+                  animate={{ strokeDashoffset: 0 }}
+                  transition={{ duration: 0.35, ease: "easeInOut", delay: 0.05 }}
+                />
+              </motion.svg>
+            </motion.span>
+          )}
+        </Button>
+
+        <Button
+          variant="ghost"
+          onClick={() => handleThemeChange('system')}
+          className={`relative h-28 rounded-xl border overflow-hidden transition-colors ${theme === 'system' ? 'border-primary ring-2 ring-primary/30' : 'border-border hover:bg-card/50'}`}
+          aria-pressed={theme === 'system'}
+        >
+          <img src="/images/system.svg" alt="System preview" loading="eager" fetchPriority="high" decoding="sync" className="hover:scale-105 transition-all duration-300 absolute inset-0 h-full w-full object-cover" />
+          <div className="absolute inset-0 rounded-xl bg-gradient-to-br from-foreground/5 to-transparent pointer-events-none"></div>
+          {theme === 'system' && (
+            <motion.span
+              initial={{ scale: 0.8, opacity: 0, y: 6 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              transition={{ duration: 0.25 }}
+              className="absolute bottom-2 right-2 size-6 rounded-full bg-primary text-primary-foreground grid place-items-center shadow-sm"
+            >
+              <motion.svg
+                viewBox="0 0 24 24"
+                className="w-3 h-3"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.2 }}
+              >
+                <motion.path
+                  d="M20 6L9 17l-5-5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  initial={{ strokeDasharray: "32 32", strokeDashoffset: 32 }}
+                  animate={{ strokeDashoffset: 0 }}
+                  transition={{ duration: 0.35, ease: "easeInOut", delay: 0.05 }}
+                />
+              </motion.svg>
+            </motion.span>
+          )}
+        </Button>
+      </div>
+      {/* Theme labels below the buttons */}
+      <div className="grid grid-cols-3 gap-3 text-center">
+        <span className="text-sm font-medium text-muted-foreground">Light</span>
+        <span className="text-sm font-medium text-muted-foreground">Dark</span>
+        <span className="text-sm font-medium text-muted-foreground">System</span>
       </div>
     </div>
   );
@@ -68,8 +171,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   onClose,
   user,
   onUserUpdate,
-  theme,
-  onThemeChange,
   aiPersonas,
   contacts,
   onToggleAiContact,
@@ -155,7 +256,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
 
             <div className="p-5 bg-muted/30 rounded-xl">
-              <ThemeSelector theme={theme} onThemeChange={onThemeChange} />
+              <ThemeSelector />
             </div>
           </div>
 

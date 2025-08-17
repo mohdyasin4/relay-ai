@@ -156,6 +156,8 @@ export class DatabaseService {
           User:contactUserId (
             id,
             name,
+            email,
+            avatarUrl,
             status,
             lastSeen
           )
@@ -173,6 +175,8 @@ export class DatabaseService {
         return {
           id: contact.contactUserId,
           name: userObj?.name || '',
+          email: userObj?.email || '',
+          avatarUrl: userObj?.avatarUrl || '',
           status: userObj?.status || 'offline',
           lastSeen: userObj?.lastSeen || null,
           isPinned: contact.isPinned,

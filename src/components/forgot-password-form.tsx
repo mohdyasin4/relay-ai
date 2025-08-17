@@ -81,8 +81,8 @@ export function ForgotPasswordForm({
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
         >
-          <div className="w-16 h-16 bg-[#3B37FE]/10 rounded-full flex items-center justify-center mb-4">
-            <Mail className="w-8 h-8 text-[#3B37FE]" />
+          <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mb-4">
+            <Mail className="w-8 h-8 text-primary" />
           </div>
           <h1 className="text-3xl font-bold bg-gradient-to-r from-foreground to-foreground/80 bg-clip-text text-transparent tracking-tight">
             Check your email
@@ -100,7 +100,7 @@ export function ForgotPasswordForm({
         >
           <motion.a 
             href="/login"
-            className="inline-flex items-center gap-2 text-[#3B37FE] hover:text-[#2B27EE] font-semibold transition-colors duration-200"
+            className="inline-flex items-center gap-2 text-primary hover:text-primary/90 font-semibold transition-colors duration-200"
             whileHover={{ scale: 1.02, x: -2 }}
             whileTap={{ scale: 0.98 }}
           >
@@ -153,7 +153,7 @@ export function ForgotPasswordForm({
             Email Address
           </Label>
           <div className="relative group">
-            <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground size-4 group-focus-within:text-[#3B37FE] transition-colors" />
+            <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground size-4 group-focus-within:text-primary transition-colors" />
             <Input 
               id="email" 
               type="email" 
@@ -170,13 +170,13 @@ export function ForgotPasswordForm({
               }}
               disabled={isLoading}
               className={cn(
-                "pl-10 h-12 rounded-lg focus:border-[#3B37FE] focus:ring-[#3B37FE] transition-all duration-200 bg-background/50 backdrop-blur-sm",
-                validationErrors.email && "border-red-500 focus:border-red-500 focus:ring-red-500"
+                "pl-10 h-12 rounded-lg focus:border-primary focus:ring-primary transition-all duration-200 bg-background/50 backdrop-blur-sm",
+                validationErrors.email && "border-destructive focus:border-destructive focus:ring-destructive"
               )}
             />
           </div>
           {validationErrors.email && (
-            <p className="text-sm text-red-500 mt-1">{validationErrors.email}</p>
+            <p className="text-sm text-destructive mt-1">{validationErrors.email}</p>
           )}
         </motion.div>
         
@@ -190,7 +190,7 @@ export function ForgotPasswordForm({
             type="submit" 
             color="primary"
             disabled={isLoading}
-            className="w-full h-12 bg-[#3B37FE] hover:bg-[#2B27EE] text-white font-semibold text-base transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full h-12 bg-primary hover:bg-primary/90 text-primary-foreground font-semibold text-base transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <motion.span
               whileHover={{ scale: isLoading ? 1 : 1.02 }}
@@ -212,7 +212,7 @@ export function ForgotPasswordForm({
       >
         <motion.a 
           href="/login"
-          className="inline-flex items-center gap-2 text-[#3B37FE] hover:text-[#2B27EE] font-semibold transition-colors duration-200"
+          className="inline-flex items-center gap-2 text-primary hover:text-primary/90 font-semibold transition-colors duration-200"
           whileHover={{ scale: 1.02, x: -2 }}
           whileTap={{ scale: 0.98 }}
         >

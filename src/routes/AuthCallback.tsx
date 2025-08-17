@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import { useSearchParams, useLocation } from 'react-router-dom';
 import { createClient } from '@/lib/supabase/client';
 import { syncUserFromSupabase } from '@/lib/supabase/authSync';
@@ -8,7 +8,7 @@ import { useAuth } from '@/contexts/AuthContext';
 const AuthCallback = () => {
   const [searchParams] = useSearchParams();
   const location = useLocation();
-  const [error, setError] = useState<string | null>(null);
+  // No error UI; navigate away on failure to avoid flashing state
   const { refreshUserSession } = useAuth();
   
   useEffect(() => {
@@ -23,8 +23,7 @@ const AuthCallback = () => {
         
         if (urlError || errorDescription) {
           console.error('Auth error from URL:', urlError, errorDescription);
-          setError(errorDescription || urlError || 'Authentication error');
-          window.location.href = '/login?error=' + encodeURIComponent(errorDescription || urlError || 'Authentication error');
+          window.location.replace('/login?error=' + encodeURIComponent(errorDescription || urlError || 'Authentication error'));
           return;
         }
         
@@ -37,7 +36,17 @@ const AuthCallback = () => {
           console.log('Current URL:', window.location.href);
           
           try {
-            const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+            // First see if a session already exists (SDK may auto-handle PKCE via detectSessionInUrl)
+            const pre = await supabase.auth.getSession();
+            let data = { user: pre.data.session?.user } as any;
+            let error: any = null;
+
+            // If no user yet, explicitly exchange code
+            if (!data.user) {
+              const resp = await supabase.auth.exchangeCodeForSession(code);
+              data = resp.data as any;
+              error = resp.error;
+            }
             
             if (error) {
               console.error('Error exchanging code for session:', error);
@@ -46,13 +55,13 @@ const AuthCallback = () => {
               if (error.message.includes('flow_state_not_found') || error.message.includes('invalid flow state')) {
                 console.log('Flow state error detected, redirecting to login');
                 
-                // Clear any stale auth data
-                localStorage.removeItem('gemini-messenger-auth');
-                localStorage.removeItem('supabase.auth.token');
+                // Clear any stale auth data (defensive; we no longer use localStorage)
+                try { localStorage.removeItem('gemini-messenger-auth'); } catch {}
+                try { localStorage.removeItem('supabase.auth.token'); } catch {}
                 await supabase.auth.signOut();
                 
                 // Redirect to login with error message
-                window.location.href = '/login?error=Authentication+session+expired.+Please+try+again.';
+                window.location.replace('/login?error=Authentication+session+expired.+Please+try+again.');
                 return;
               }
             }
@@ -87,15 +96,14 @@ const AuthCallback = () => {
               
               // Successfully authenticated - force direct navigation with replacement
               console.log('Authentication successful, redirecting to /app');
-              window.location.href = '/app'; // Use direct browser navigation instead of React Router
+              window.location.replace('/app');
               return;
             } else {
               console.warn('No user data found after exchanging code');
-              setError('Authentication failed: No user data found');
             }
           } catch (authError) {
             console.error('Error during code exchange:', authError);
-            setError('Authentication failed: ' + ((authError as Error)?.message || 'Unknown error'));
+            window.location.replace('/login?error=' + encodeURIComponent((authError as Error)?.message || 'Unknown error'));
           }
         } 
         // Handle hash fragment (#) for implicit flow
@@ -144,7 +152,7 @@ const AuthCallback = () => {
               
               // Successfully authenticated - force direct navigation with replacement
               console.log('Authentication successful (hash flow), redirecting to /app');
-              window.location.href = '/app';
+              window.location.replace('/app');
               return;
             }
           } else {
@@ -162,21 +170,35 @@ const AuthCallback = () => {
           
           if (data.session?.user) {
             console.log('Found existing session, redirecting to /app');
-            window.location.href = '/app';
+            window.location.replace('/app');
             return;
+          }
+          // Fallback: try to parse tokens from hash if provider returned implicit tokens
+          if (location.hash) {
+            const hp = new URLSearchParams(location.hash.substring(1));
+            const accessToken = hp.get('access_token');
+            const refreshToken = hp.get('refresh_token');
+            if (accessToken) {
+              const { data: setData, error: setErr } = await supabase.auth.setSession({
+                access_token: accessToken,
+                refresh_token: refreshToken || ''
+              });
+              if (!setErr && setData?.user) {
+                window.location.replace('/app');
+                return;
+              }
+            }
           }
         } catch (sessionError) {
           console.error('Error checking session:', sessionError);
         }
         
         // If we got here, we don't have any valid authentication
-        setError('No valid authentication found. Please try logging in again.');
-        window.location.href = '/login?error=No+valid+authentication+found';
+        window.location.replace('/login?error=No+valid+authentication+found');
         
       } catch (err) {
         console.error('Error processing auth callback:', err);
-        setError((err as Error)?.message || 'An unexpected error occurred');
-        window.location.href = '/login?error=' + encodeURIComponent((err as Error)?.message || 'An unexpected error occurred');
+        window.location.replace('/login?error=' + encodeURIComponent((err as Error)?.message || 'An unexpected error occurred'));
       }
     };
     
@@ -193,26 +215,23 @@ const AuthCallback = () => {
     return () => clearTimeout(fallbackTimer);
   }, [searchParams, location.hash, refreshUserSession]);
   
-  // Show loading state while processing authentication
+  // Always show a clean, neutral preparing screen while processing
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-50 dark:bg-slate-900">
-      <div className="text-center">
-        {error ? (
-          <div className="mb-4 rounded-lg bg-red-100 p-4 text-red-700 dark:bg-red-900/20 dark:text-red-400">
-            <p>Authentication Error</p>
-            <p className="text-sm">{error}</p>
-          </div>
-        ) : (
-          <>
-            <div className="mb-4 text-2xl font-semibold text-slate-800 dark:text-slate-200">
-              Processing your sign in...
-            </div>
-            <div className="mb-4 text-slate-500 dark:text-slate-400">
-              Please wait while we authenticate your account.
-            </div>
-            <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600 dark:border-slate-600 dark:border-t-slate-300"></div>
-          </>
-        )}
+    <div className="min-h-svh bg-background flex items-center justify-center px-6" aria-busy>
+      <div className="w-full max-w-md rounded-2xl border border-border bg-card/60 backdrop-blur-sm shadow-sm p-8 text-center">
+        <div className="mx-auto mb-4 size-10 rounded-xl bg-primary/10 grid place-items-center">
+          <div className="border-primary animate-spin rounded-full border-2 border-t-transparent size-5" />
+        </div>
+        <h1 className="text-xl font-semibold tracking-tight text-foreground">Preparing Relay</h1>
+        <p className="text-sm text-muted-foreground mt-1">Securely signing you in and setting things up…</p>
+        <div className="mt-6 flex items-center justify-center gap-2 text-muted-foreground">
+          <span className="text-primary font-medium text-sm">Loading</span>
+          <span className="inline-flex">
+            <span className="text-primary animate-[loading-dots_1.4s_infinite_0.2s]">.</span>
+            <span className="text-primary animate-[loading-dots_1.4s_infinite_0.4s]">.</span>
+            <span className="text-primary animate-[loading-dots_1.4s_infinite_0.6s]">.</span>
+          </span>
+        </div>
       </div>
     </div>
   );

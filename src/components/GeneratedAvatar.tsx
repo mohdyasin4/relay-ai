@@ -55,7 +55,7 @@ const GeneratedAvatar: React.FC<GeneratedAvatarProps> = ({ name, isGroup, member
     else if (memberCount <= 9) gridClass = "grid-cols-3 grid-rows-3";
     else gridClass = "grid-cols-4 grid-rows-4";
     return (
-      <div className={`w-12 h-12 grid ${gridClass} gap-px bg-slate-200 dark:bg-slate-700 rounded-md overflow-hidden flex-shrink-0 ${className}`}>
+      <div className={`w-10 h-10 grid ${gridClass} gap-px bg-slate-200 dark:bg-slate-700 rounded-md overflow-hidden flex-shrink-0 ${className}`}>
         {displayMembers.map((member) => (
           <Avatar key={member.id} className="rounded-none w-full h-full">
             {member.avatarUrl ? (
