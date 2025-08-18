@@ -17,6 +17,7 @@ import { fileToBase64 } from "../utils/imageUtils";
 import { formatPresence, DateUtils } from "../utils/dateUtils";
 
 import GeneratedAvatar from "./GeneratedAvatar";
+import TypingIndicatorWithAvatars from "./TypingIndicatorWithAvatars";
 import DateSeparator from "./DateSeparator";
 // import NewMessagesSeparator from "./NewMessagesSeparator";
 // import MentionSuggestions from "./MentionSuggestions";
@@ -24,7 +25,7 @@ import DateSeparator from "./DateSeparator";
 import CloseIcon from "./icons/CloseIcon";
 import PlusIcon from "./icons/PlusIcon";
 import CheckIcon from "./icons/CheckIcon";
-import ReplyIcon from "./icons/ReplyIcon";
+
 // import ChatBubbleLeftRightIcon from "./icons/ChatBubbleLeftRightIcon";
 
 import type {
@@ -69,22 +70,24 @@ import {
   ArrowLeft,
   Sparkles,
   Ellipsis,
+  Share2,
 } from "lucide-react";
 import { Paperclip } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import EmojiPickerReact, { SuggestionMode } from "emoji-picker-react";
 import { useTheme } from "./theme-provider";
 import { ScrollButton } from "./ui/scroll-button";
+import { Badge } from "./ui/badge";
+
 import { Mention, MentionContent, MentionInput, MentionItem } from "@/components/ui/mention";
 import { Theme as EmojiTheme } from "emoji-picker-react";
 
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { useTextStream } from "@/components/ui/response-stream";
+
 import { cookies } from "@/lib/cookies";
 import { MentionText } from "@/components/ui/mention-text";
 import { getSenderColorClass } from "@/utils/colorUtils";
 import { MessageService } from "@/services/messageService";
-import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarGroup, Popover as HeroPopover, PopoverTrigger as HeroPopoverTrigger, PopoverContent as HeroPopoverContent, Button as HeroButton } from "@heroui/react";
 //
 
@@ -174,12 +177,25 @@ const MessageItem = memo(({
     return null;
   }, [isSelf, msg.status]);
 
-  const isStreamingThis = useMemo(() =>
-    (contact.isAi || (contact.isGroup && aiPersonas.some(ai => ai.id === msg.senderId))) &&
-    !!aiStream &&
-    aiStream!.messageId === msg.id,
-    [contact.isAi, contact.isGroup, aiPersonas, aiStream?.messageId, msg.senderId, msg.id]
-  );
+  const isStreamingThis = useMemo(() => {
+    const isAiContact = contact.isAi;
+    const isGroupWithAi = contact.isGroup && aiPersonas.some(ai => ai.id === msg.senderId);
+    const hasAiStream = !!aiStream;
+    const messageMatches = aiStream?.messageId === msg.id;
+    
+    console.log('isStreamingThis check:', {
+      msgId: msg.id,
+      isAiContact,
+      isGroupWithAi, 
+      hasAiStream,
+      aiStreamMessageId: aiStream?.messageId,
+      messageMatches,
+      aiStreamText: aiStream?.text?.length || 0,
+      result: (isAiContact || isGroupWithAi) && hasAiStream && messageMatches
+    });
+    
+    return (isAiContact || isGroupWithAi) && hasAiStream && messageMatches;
+  }, [contact.isAi, contact.isGroup, aiPersonas, aiStream?.messageId, msg.senderId, msg.id]);
 
   const isAiSender = useMemo(() => {
     // Check if message has AI-specific fields
@@ -240,10 +256,101 @@ const MessageItem = memo(({
     return false;
   }, [contact.isGroup, contact.isAi, msg.senderId, msg.senderName, aiPersonas, msg]);
 
-  const aiDisplayedText = useMemo(() =>
-    isStreamingThis ? (aiStream?.text || "") : "",
-    [isStreamingThis, aiStream?.text]
-  );
+  // Custom streaming implementation
+  const [hasReceivedResponse, setHasReceivedResponse] = useState(false);
+  const [displayedCharCount, setDisplayedCharCount] = useState(0);
+  const [fullResponse, setFullResponse] = useState("");
+  const [isStreamingActive, setIsStreamingActive] = useState(false);
+  const streamingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Debug the overall streaming state
+  useEffect(() => {
+    console.log('Streaming state update:', {
+      isStreamingThis,
+      messageId: aiStream?.messageId,
+      hasText: !!aiStream?.text,
+      textLength: aiStream?.text?.length || 0
+    });
+  }, [isStreamingThis, aiStream]);
+
+  // Reset when streaming starts/stops
+  useEffect(() => {
+    if (isStreamingThis && aiStream?.messageId) {
+      console.log('🔄 Resetting for new stream:', aiStream.messageId);
+      setHasReceivedResponse(false);
+      setDisplayedCharCount(0);
+      setFullResponse("");
+      setIsStreamingActive(false);
+      if (streamingIntervalRef.current) {
+        clearInterval(streamingIntervalRef.current);
+        streamingIntervalRef.current = null;
+      }
+    }
+  }, [isStreamingThis, aiStream?.messageId]);
+
+  // Track when we receive the response
+  useEffect(() => {
+    console.log('Response check:', {
+      isStreamingThis,
+      hasText: !!aiStream?.text,
+      hasReceivedResponse,
+      textPreview: aiStream?.text?.substring(0, 50) + '...'
+    });
+    
+    if (isStreamingThis && aiStream?.text && !hasReceivedResponse) {
+      console.log('📝 AI response received, will start streaming:', aiStream.text.length, 'characters');
+      console.log('Response preview:', aiStream.text.substring(0, 100) + '...');
+      setFullResponse(aiStream.text);
+      // Small delay to show thinking state
+      setTimeout(() => {
+        console.log('🚀 Starting streaming...');
+        setHasReceivedResponse(true);
+        setIsStreamingActive(true);
+        setDisplayedCharCount(0);
+      }, 1000);
+    }
+  }, [isStreamingThis, aiStream?.text, hasReceivedResponse]);
+
+  // Custom character-by-character streaming
+  useEffect(() => {
+    if (isStreamingActive && fullResponse && displayedCharCount < fullResponse.length) {
+      streamingIntervalRef.current = setInterval(() => {
+        setDisplayedCharCount(prev => {
+          const next = prev + 1;
+          console.log('Streaming char:', next, '/', fullResponse.length);
+          if (next >= fullResponse.length) {
+            console.log('Streaming complete!');
+            setIsStreamingActive(false);
+            if (streamingIntervalRef.current) {
+              clearInterval(streamingIntervalRef.current);
+              streamingIntervalRef.current = null;
+            }
+          }
+          return next;
+        });
+                   }, 15); // 15ms per character - faster typing
+    }
+
+    return () => {
+      if (streamingIntervalRef.current) {
+        clearInterval(streamingIntervalRef.current);
+      }
+    };
+  }, [isStreamingActive, fullResponse, displayedCharCount]);
+
+          const aiDisplayedText = useMemo(() => {
+          if (!isStreamingThis) return "";
+          if (!hasReceivedResponse) {
+            console.log('Still thinking...');
+            return ""; // Show thinking state
+          }
+          const text = fullResponse.slice(0, displayedCharCount);
+          console.log('Displaying:', text.length, '/', fullResponse.length, 'chars');
+          // Ensure we return a valid string and handle incomplete markdown
+          const safeText = typeof text === 'string' ? text : String(text || '');
+          // Additional safety: ensure we don't have any object-like content
+          return safeText.toString();
+        }, [isStreamingThis, hasReceivedResponse, fullResponse, displayedCharCount]);
 
   const textToRender = useMemo(() =>
     (msg.text || "").toString(),
@@ -260,8 +367,8 @@ const MessageItem = memo(({
   const messageContent = useMemo(() => {
     // AI response rendering with typewriter effect
     if (isStreamingThis) {
-      // Show thinking indicator until we have the first chunk
-      if (aiDisplayedText.length === 0) {
+      // Show thinking indicator until we have response
+      if (!hasReceivedResponse) {
         return (
           <div className={`bg-muted/70 text-foreground px-4 py-3 rounded-2xl rounded-tl-none max-w-2xl min-w-[120px] pb-7 backdrop-blur-sm border border-border/60 shadow-sm`}>
             <div className="flex items-center gap-2 text-muted-foreground">
@@ -285,7 +392,7 @@ const MessageItem = memo(({
           }}
           id={msg.id}
         >
-          {aiDisplayedText}
+          {aiDisplayedText || ""}
         </MemoizedMessageContent>
       );
     }
@@ -319,8 +426,24 @@ const MessageItem = memo(({
       );
     }
 
-    // Use markdown for AI messages, MentionText for user messages
-    if (isAiSender) {
+    // Helper function to detect if text contains markdown patterns
+    const hasMarkdownContent = (text: string): boolean => {
+      const markdownPatterns = [
+        /```[\s\S]*?```/,     // Code blocks
+        /`[^`]+`/,            // Inline code
+        /\*\*[^*]+\*\*/,      // Bold
+        /\*[^*]+\*/,          // Italic
+        /#{1,6}\s+/,          // Headers
+        /^\s*[-*+]\s/m,       // List items
+        /^\s*\d+\.\s/m,       // Numbered lists
+        /\[([^\]]+)\]\(([^)]+)\)/, // Links
+        /!\[([^\]]*)\]\(([^)]+)\)/, // Images
+      ];
+      return markdownPatterns.some(pattern => pattern.test(text));
+    };
+
+    // Use markdown for AI messages, forwarded messages, or user messages with markdown content
+    if (isAiSender || msg.isForwarded || hasMarkdownContent(textToRender)) {
       // Reduced noisy debug logging; keep lightweight flag only in dev
       // if (import.meta.env?.MODE === 'development' && textToRender.includes('```')) {
       //   console.debug('AI markdown render', { len: textToRender.length, contact: contact.name });
@@ -328,10 +451,62 @@ const MessageItem = memo(({
       
 
       
+      // Different styling for AI, forwarded, and user markdown messages
+      let messageClass;
+      if (msg.isForwarded) {
+        messageClass = `bg-blue-50/60 dark:bg-blue-950/30 text-foreground rounded-2xl ${isSelf ? "rounded-tr-none" : "rounded-tl-none"} prose-h2:mt-0! prose-h2:scroll-m-0! px-4 py-3 break-words max-w-2xl min-w-[110px] pb-7 backdrop-blur-sm border border-blue-200/40 dark:border-blue-800/40 shadow-sm inter-double-storey`;
+      } else if (isAiSender) {
+        messageClass = `bg-amber-700/10 text-foreground rounded-2xl rounded-tl-none prose-h2:mt-0! prose-h2:scroll-m-0! px-4 py-3 break-words max-w-2xl min-w-[110px] pb-7 backdrop-blur-sm border border-amber-500/60 shadow-sm inter-double-storey`;
+      } else {
+        // User message with markdown content
+        const baseClass = isSelf
+          ? "bg-primary/20 text-foreground border border-primary/40 ring-1 ring-primary/20"
+          : "bg-card/70 text-foreground border-2 border-border/60";
+        messageClass = `${baseClass} rounded-2xl ${isSelf ? "rounded-tr-none" : "rounded-tl-none"} prose-h2:mt-0! prose-h2:scroll-m-0! px-4 py-3 break-words max-w-2xl min-w-[110px] pb-7 backdrop-blur-sm shadow-sm inter-double-storey`;
+      }
+      
       return (
+        <div className={messageClass}>
+          {/* Nested Reply - Exactly Like Screenshot */}
+          {msg.replyTo && (
+            <motion.div
+              initial={{ opacity: 0, y: -2 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.15, ease: "easeOut" }}
+              className="mb-3 pb-3 border-l-4 border-muted-foreground/30 pl-3 ml-1 relative"
+            >
+              <div 
+                className="p-2 -ml-2"
+
+              >
+                {/* Original sender name */}
+                <div className="flex items-center gap-1.5 mb-1">
+                  <span className="text-xs font-medium text-muted-foreground/90">
+                    {msg.replyTo.senderName}
+                  </span>
+                </div>
+                
+                {/* Original message content */}
+                <div className="text-xs text-muted-foreground/70 leading-tight line-clamp-2">
         <MemoizedMessageContent
           markdown={true}
-          className={`bg-amber-700/10 text-foreground rounded-2xl rounded-tl-none prose-h2:mt-0! prose-h2:scroll-m-0! px-4 py-3 break-words max-w-2xl min-w-[110px] pb-7 backdrop-blur-sm border border-amber-500/60 shadow-sm inter-double-storey`}
+                    className="chatgpt-markdown max-w-none text-muted-foreground/70 [&>*]:text-xs [&>*]:m-0 [&>p]:leading-tight [&>*]:text-inherit"
+                    theme={theme.theme}
+                    copied={false}
+                    setCopied={() => {}}
+                    handleCopy={() => {}}
+                  >
+                    {msg.replyTo.text || "Click to see attachment"}
+                  </MemoizedMessageContent>
+                </div>
+              </div>
+            </motion.div>
+          )}
+          
+          {/* Main message content */}
+          <MemoizedMessageContent
+            markdown={true}
+            className="chatgpt-markdown max-w-none"
           theme={theme.theme}
           copied={copied}
           setCopied={setCopied}
@@ -344,6 +519,7 @@ const MessageItem = memo(({
         >
           {textToRender}
         </MemoizedMessageContent>
+        </div>
       );
     } else {
       // Non-AI senders: user or other humans
@@ -352,6 +528,37 @@ const MessageItem = memo(({
         : "bg-card/70 text-foreground border-2 border-border/60";
       return (
         <div className={`${baseClass} rounded-2xl ${isSelf ? "rounded-tr-none" : "rounded-tl-none"} px-4 py-3 break-words max-w-2xl min-w-[110px] pb-7 backdrop-blur-sm shadow-sm`}>
+          {/* Nested Reply for non-markdown messages */}
+          {msg.replyTo && (
+            <motion.div
+              initial={{ opacity: 0, y: -2 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.15, ease: "easeOut" }}
+              className="mb-3 pb-3 border-l-4 border-muted-foreground/30 pl-3 ml-1 relative"
+            >
+              <div 
+                className="p-2 -ml-2"
+
+              >
+                {/* Original sender name */}
+                <div className="flex items-center gap-1.5 mb-1">
+                  <span className="text-xs font-medium text-muted-foreground/90">
+                    {msg.replyTo.senderName}
+                  </span>
+                </div>
+                
+                {/* Original message content */}
+                <div className="text-xs text-muted-foreground/70 leading-tight line-clamp-2">
+                  <MemoizedMentionText
+                    text={msg.replyTo.text || "Click to see attachment"}
+                    contacts={allKnownContacts}
+                    className="text-muted-foreground/70"
+                  />
+                </div>
+              </div>
+            </motion.div>
+          )}
+          
           <MemoizedMentionText
             text={textToRender}
             contacts={allKnownContacts}
@@ -362,6 +569,8 @@ const MessageItem = memo(({
     }
   }, [
     isStreamingThis,
+    hasReceivedResponse,
+    isStreamingActive,
     aiDisplayedText,
     textToRender,
     isEmojiOnly,
@@ -378,7 +587,10 @@ const MessageItem = memo(({
   ]);
 
   return (
-    <div className={`group flex gap-3 ${isSelf ? "flex-row-reverse" : "flex-row"}`}>
+    <div 
+      className={`group flex gap-3 ${isSelf ? "flex-row-reverse" : "flex-row"}`}
+      data-message-id={msg.id}
+    >
       {/* Avatar */}
       {!isSelf && (
         <div className="flex-shrink-0">
@@ -419,6 +631,24 @@ const MessageItem = memo(({
             </Badge>
           </div>
         )}
+
+        {/* Forwarded Message Header - Compact Design */}
+        {msg.isForwarded && (
+          <div className="mb-2 max-w-full">
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground/80 mb-1">
+              <Share2 className="w-3 h-3" />
+              <span className="font-medium">
+                Forwarded
+                {msg.forwardedFromContactId && (() => {
+                  const fromContact = allKnownContacts.find(c => c.id === msg.forwardedFromContactId);
+                  return fromContact ? ` from ${fromContact.name}` : '';
+                })()}
+              </span>
+            </div>
+          </div>
+        )}
+
+
 
         {/* Message Bubble */}
         <div className="relative">
@@ -737,27 +967,9 @@ const ChatView: React.FC<ChatViewProps> = memo(({
     };
   }, [isComposerEmojiOpen, mobileMessageActions]);
 
-  // Stream only the latest AI message if aiStream is provided
-  const {
-    displayedText: aiDisplayedText,
-    startStreaming: startAiStreaming,
-    reset: resetAiStreaming,
-  } = useTextStream({
-    textStream: aiStream?.stream || aiStream?.text || "",
-    mode: "typewriter",
-    speed: 350,
-  });
-
   // Track whether an AI response is pending streaming to avoid empty bubbles and false typing
   const isStreamingActive = !!aiStream && !!aiStream.messageId;
-  const aiThinking = isStreamingActive && (aiDisplayedText?.length ?? 0) === 0;
-
-  useEffect(() => {
-    if (aiStream && (aiStream.stream || aiStream.text)) {
-      resetAiStreaming();
-      startAiStreaming();
-    }
-  }, [aiStream?.messageId, aiStream?.stream, aiStream?.text, resetAiStreaming, startAiStreaming]);
+  const aiThinking = isStreamingActive;
   // Removed legacy suggestion state (DiceUI Mention handles suggestions)
   const [copied, setCopied] = useState(false);
 
@@ -777,7 +989,8 @@ const ChatView: React.FC<ChatViewProps> = memo(({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // Using PromptInputTextarea internal ref; no local textarea ref needed
-  const typingTimeoutRef = useRef<number | null>(null);
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const typingDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const separatorRef = useRef<HTMLDivElement>(null);
   const lastSubmitRef = useRef<{ sig: string; at: number } | null>(null);
   const theme = useTheme()
@@ -996,13 +1209,19 @@ const ChatView: React.FC<ChatViewProps> = memo(({
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  // Emit typing events when input changes via PromptInput
+  // Emit typing events when input changes via PromptInput (optimized for performance)
   useEffect(() => {
     if (!contact || contact.isAi || !currentUser) return;
+    
     const hasText = !!inputText && inputText.trim().length > 0;
     const topic = contact.isGroup
       ? `chat/${contact.id}`
       : contact.topicId || `chat/${[currentUser.id, contact.id].sort().join("-")}`;
+
+    // Clear any existing debounce timer
+    if (typingDebounceRef.current) {
+      clearTimeout(typingDebounceRef.current);
+    }
 
     if (hasText) {
       // Only send 'start' once per typing session
@@ -1017,11 +1236,12 @@ const ChatView: React.FC<ChatViewProps> = memo(({
         mqttService.publish(topic, startPayload);
       }
 
-      // Reset debounce timer for 'stop'
+      // Debounce the stop typing event to reduce MQTT messages
+      typingDebounceRef.current = setTimeout(() => {
       if (typingTimeoutRef.current) {
-        window.clearTimeout(typingTimeoutRef.current);
+          clearTimeout(typingTimeoutRef.current);
       }
-      typingTimeoutRef.current = window.setTimeout(() => {
+        typingTimeoutRef.current = setTimeout(() => {
         const stopPayload: TypingIndicatorPayload = {
           type: "typing",
           contactId: contact.id,
@@ -1031,11 +1251,13 @@ const ChatView: React.FC<ChatViewProps> = memo(({
         };
         mqttService.publish(topic, stopPayload);
         typingTimeoutRef.current = null;
-      }, 1000);
+        }, 2000); // Increased from 1000ms to 2000ms for better performance
+      }, 300); // Debounce typing events by 300ms
     } else {
-      // If text cleared, ensure a single 'stop'
+      // If text cleared, ensure a single 'stop' after a short delay
+      typingDebounceRef.current = setTimeout(() => {
       if (typingTimeoutRef.current) {
-        window.clearTimeout(typingTimeoutRef.current);
+          clearTimeout(typingTimeoutRef.current);
         typingTimeoutRef.current = null;
       }
       const stopPayload: TypingIndicatorPayload = {
@@ -1046,8 +1268,16 @@ const ChatView: React.FC<ChatViewProps> = memo(({
         state: "stop",
       };
       mqttService.publish(topic, stopPayload);
+      }, 500); // Reduced delay for clearing text
     }
-  }, [inputText, contact?.id, currentUser?.id]);
+
+    // Cleanup function
+    return () => {
+      if (typingDebounceRef.current) {
+        clearTimeout(typingDebounceRef.current);
+      }
+    };
+  }, [inputText, contact?.id, currentUser?.id, mqttService]);
 
   // Legacy manual mention selection removed (DiceUI Mention inserts on Enter)
 
@@ -1114,9 +1344,25 @@ const ChatView: React.FC<ChatViewProps> = memo(({
 
   // Removed local keydown handling to allow DiceUI Mention to manage Enter/Arrows
 
+  // Transform typing indicators to typing users with avatars (must be before early return)
+  const typingUsers = useMemo(() => {
+    if (!contact || contact.isAi || !typingIndicators || Object.keys(typingIndicators).length === 0) {
+      return [];
+    }
+
+    return Object.entries(typingIndicators).map(([userId, userName]) => {
+      const user = contacts.find(c => c.id === userId);
+      return {
+        id: userId,
+        name: userName,
+        avatarUrl: user?.avatarUrl
+      };
+    });
+  }, [typingIndicators, contact, contacts]);
+
   if (!contact) {
     return (
-      <div className="relative flex-1 flex items-center justify-center h-screen p-6 md:p-10 overflow-hidden bg-[radial-gradient(ellipse_at_bottom,color-mix(in_oklch,var(--primary)_25%,transparent),transparent_65%),radial-gradient(ellipse_at_bottom_right,transparent_65%)]">
+      <div className="relative flex-1 flex items-center justify-center h-full p-6 md:p-10 overflow-hidden bg-[radial-gradient(ellipse_at_bottom,color-mix(in_oklch,var(--primary)_25%,transparent),transparent_65%),radial-gradient(ellipse_at_bottom_right,transparent_65%)]">
          <motion.div
         initial={{ opacity: 0, y: 18 }}
         animate={{ opacity: 1, y: 0 }}
@@ -1414,7 +1660,7 @@ const ChatView: React.FC<ChatViewProps> = memo(({
   };
 
   return (
-    <div className="flex h-full flex-col bg-background">
+    <div className="flex h-full flex-col bg-background overflow-hidden">
       <header className="p-3 md:p-4 border-b flex items-center gap-3 bg-background/80 backdrop-blur-sm z-10">
         {onBack &&
           <Button
@@ -1470,7 +1716,7 @@ const ChatView: React.FC<ChatViewProps> = memo(({
         )}
       </header>
       <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
-        <ChatContainerRoot className="flex-1 overflow-y-auto space-y-0" onScroll={(e) => {
+        <ChatContainerRoot className="flex-1 overflow-y-auto space-y-0 px-4 pb-4 min-h-0" onScroll={(e) => {
           const el = e.currentTarget as HTMLElement;
           // Load older messages when reaching the very top
           if (el.scrollTop <= 0 && !isLoadingOlder) {
@@ -1653,16 +1899,20 @@ const ChatView: React.FC<ChatViewProps> = memo(({
               <motion.div
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.18, ease: "easeOut" }}
+                exit={{ opacity: 0, y: 6 }}
+                transition={{ duration: 0.18, ease: "easeInOut" }}
                 key="typing-indicator"
                 className="flex justify-start"
               >
                 <div className="flex items-end gap-2.5">
-                  <div className="flex p-2 bg-muted rounded-2xl rounded-tl-none">
-                    <Loader variant="typing" />
+                  <div className="flex p-3">
+                    <TypingIndicatorWithAvatars 
+                      typingUsers={typingUsers}
+                      showAvatars={true}
+                      maxAvatars={3}
+                      className="items-center"
+                    />
                   </div>
-
-                  <div className="text-xs text-muted-foreground pb-1">{typingUserNames[0]} is typing</div>
                 </div>
               </motion.div>
             )}
@@ -1686,7 +1936,7 @@ const ChatView: React.FC<ChatViewProps> = memo(({
           }
         />
       </div>
-      <div className="m-4 mt-0 z-10 bottom-0 ">
+      <div className="px-4 pb-4 pt-2 z-10">
         {attachment && (
           <div className="relative w-24 h-24 mb-2 p-1 border border-slate-300 dark:border-slate-700 rounded-lg">
             <img
@@ -1704,26 +1954,69 @@ const ChatView: React.FC<ChatViewProps> = memo(({
           </div>
         )}
         {replyingTo && (
-          <div className="mb-2 flex items-start gap-2 bg-slate-200 dark:bg-slate-800 p-2 rounded-lg relative">
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center">
-                <ReplyIcon className="w-4 h-4 mr-1 text-primary" />
-                <span className="font-medium text-sm text-primary">
+          <motion.div
+            initial={{ opacity: 0, y: 8, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -8, scale: 0.98 }}
+            transition={{ duration: 0.2, ease: "easeOut" }}
+            className="mb-2 mx-1"
+          >
+            <div className="relative bg-muted/10 dark:bg-muted/8 border border-border/50 rounded-xl px-4 py-3 backdrop-blur-sm shadow-sm hover:shadow-md transition-all duration-200">
+              {/* Header with "Replying to" and close button */}
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <div className="p-1 rounded-md bg-primary/10">
+                    <Reply className="w-3 h-3 text-primary" />
+                  </div>
+                  <span className="text-sm font-medium text-primary">
                   Replying to {replyingTo.senderName}
                 </span>
               </div>
-              <p className="text-sm text-slate-600 dark:text-slate-400 truncate">
-                {replyingTo.text}
-              </p>
-            </div>
-            <button
+                <Button
+                  variant="ghost"
+                  size="icon"
               onClick={() => setReplyingTo(null)}
-              className="text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+                  className="h-6 w-6 text-muted-foreground/60 hover:text-foreground hover:bg-muted/30 rounded-full transition-colors"
               aria-label="Cancel reply"
             >
-              <CloseIcon className="w-4 h-4" />
-            </button>
+                  <CloseIcon className="w-3 h-3" />
+                </Button>
           </div>
+              
+              {/* Reply content with exact Discord styling */}
+              <div className="flex items-start gap-2">
+                {/* Left gray bar - same as inline replies */}
+                <div className="w-1 h-12 bg-muted-foreground/40 rounded-sm mt-0.5 flex-shrink-0"></div>
+                
+                {/* Message content - clickable to scroll to original message */}
+                <div 
+                  className="flex-1 min-w-0 p-1 -m-1"
+
+                >
+                  <div className="flex items-baseline gap-1 mb-0.5">
+                    <span className="text-xs font-medium text-muted-foreground/90">
+                      {replyingTo.senderName}
+                    </span>
+                  </div>
+                  <div className="text-sm text-muted-foreground/80 leading-relaxed max-h-20 overflow-y-auto scrollbar-hide">
+                    <MemoizedMessageContent
+                      markdown={true}
+                      className="chatgpt-markdown max-w-none text-muted-foreground/80"
+                      theme={theme.theme}
+                      copied={false}
+                      setCopied={() => {}}
+                      handleCopy={() => {}}
+                    >
+                      {replyingTo.text || "Click to see attachment"}
+                    </MemoizedMessageContent>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Subtle gradient overlay for premium feel */}
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-primary/1 to-transparent rounded-xl pointer-events-none" />
+            </div>
+          </motion.div>
         )}
         <form onSubmit={handleSubmit} className="flex w-full items-start gap-3">
   <input
@@ -1801,7 +2094,6 @@ const ChatView: React.FC<ChatViewProps> = memo(({
 
       {/* Textarea / Mention input */}
       <div className="flex-1 min-w-0">
-        {contact?.isGroup ? (
           <Mention 
             key={mentionKey}
             className="w-full [--dice-transform-origin:10px] **:data-tag:rounded-full **:data-tag:text-[12px] **:data-tag:bg-primary **:data-tag:text-primary-foreground dark:**:data-tag:bg-primary dark:**:data-tag:text-primary-foreground"
@@ -1816,7 +2108,9 @@ const ChatView: React.FC<ChatViewProps> = memo(({
               <PromptInputTextarea />
             </MentionInput>
             <MentionContent className="data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 relative z-50 min-w-[var(--dice-anchor-width)] overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-md data-[state=closed]:animate-out data-[state=open]:animate-in">
-              {(contact.memberIds || [])
+            {contact?.isGroup ? (
+              // Group chat: show group members
+              (contact.memberIds || [])
                 .filter((id) => id !== currentUser.id)
                 .map((id) => {
                   const member = allKnownContacts.find((c) => c.id === id);
@@ -1836,15 +2130,29 @@ const ChatView: React.FC<ChatViewProps> = memo(({
                       <span className="font-medium">{member.name}</span>
                     </MentionItem>
                   );
-                })}
-            </MentionContent>
-          </Mention>
-        ) : (
-          <PromptInputTextarea
-            placeholder="Type a message..."
-            className="flex w-full text-base leading-[1.3] px-3 py-2 self-center"
-          />
-        )}
+                })
+            ) : (
+              // Direct chat: show the other person and all contacts
+              allKnownContacts
+                .filter((c) => c.id !== currentUser.id && !c.isAi)
+                .map((member) => (
+                  <MentionItem
+                    key={member.id}
+                    value={member.name}
+                    className="relative flex w-full cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-hidden data-disabled:pointer-events-none data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:opacity-50"
+                  >
+                    <GeneratedAvatar
+                      key={member.id + "-avatar"}
+                      name={member.name}
+                      allContacts={allKnownContacts}
+                      currentUser={currentUser}
+                    />
+                    <span className="font-medium">{member.name}</span>
+                  </MentionItem>
+                ))
+            )}
+          </MentionContent>
+        </Mention>
       </div>
 
       {/* Send button */}

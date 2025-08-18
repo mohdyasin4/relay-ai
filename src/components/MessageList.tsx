@@ -10,6 +10,8 @@ interface MessageListProps {
   onImageClick: (imageUrl: string) => void;
   onReact: (messageId: string, emoji: string) => void;
   onForward: (message: Message) => void;
+  onLoadOlder?: () => void;
+  isLoadingOlder?: boolean;
   className?: string;
   height?: number;
   firstUnreadMessageId?: string | null;
@@ -210,6 +212,8 @@ const MessageList: React.FC<MessageListProps> = ({
   onImageClick,
   onReact,
   onForward,
+  onLoadOlder,
+  isLoadingOlder = false,
   className,
   height = 400,
   firstUnreadMessageId,
@@ -331,6 +335,9 @@ const MessageList: React.FC<MessageListProps> = ({
         itemKey={(index, data) => data[index].message.id}
         overscan={5}
         initialScrollOffset={999999} // Scroll to bottom initially
+        onLoadMore={onLoadOlder}
+        isLoading={isLoadingOlder}
+        loadMoreThreshold={5} // Load more when within 5 items of the top
       />
     </div>
   );

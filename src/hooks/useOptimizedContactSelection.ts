@@ -113,9 +113,9 @@ export function useOptimizedContactSelection({
       }
     }
 
-    // 4. Always load messages for this chat to ensure latest messages replace any primed/latest-only state
+    // 4. Load messages immediately for this chat
     console.log('Loading messages for contact:', { contactId, isGroup: !!contact.isGroup, contactType: contact.isGroup ? 'group' : 'direct' });
-    void loadMessagesInBackground(contactId, !!contact.isGroup);
+    await loadMessagesImmediately(contactId, !!contact.isGroup);
   }, [
     user,
     contacts,
@@ -127,6 +127,38 @@ export function useOptimizedContactSelection({
     setUnreadCounts,
     setMessages,
   ]);
+
+  // Immediate loading function for selected contact
+  const loadMessagesImmediately = useCallback(async (contactId: string, isGroup: boolean) => {
+    // Prevent duplicate loading requests
+    const cacheKey = `${contactId}-${isGroup}`;
+    if (loadingPromises.current.has(cacheKey)) {
+      return loadingPromises.current.get(cacheKey);
+    }
+
+    const loadPromise = (async () => {
+      try {
+        // Fetch more messages for immediate display (50 for good coverage)
+        console.log('Fetching messages immediately for:', { contactId, isGroup, cacheKey });
+        const dbMessages = await MessageService.getMessages(contactId, isGroup, 50);
+        console.log('Fetched messages immediately:', { contactId, count: dbMessages.length, isGroup });
+        
+        if (dbMessages.length > 0) {
+          setMessages(prev => ({
+            ...prev,
+            [contactId]: dbMessages
+          }));
+        }
+      } catch (error) {
+        console.error('Failed to load messages immediately:', error);
+      } finally {
+        loadingPromises.current.delete(cacheKey);
+      }
+    })();
+
+    loadingPromises.current.set(cacheKey, loadPromise);
+    return loadPromise;
+  }, [setMessages]);
 
   // Background loading functions that don't block UI
   const loadMessagesInBackground = useCallback(async (contactId: string, isGroup: boolean) => {

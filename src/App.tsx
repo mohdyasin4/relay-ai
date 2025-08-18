@@ -334,27 +334,26 @@ const App: React.FC = () => {
         });
       }, 0);
       
-      // Prime latest messages asynchronously
-      setTimeout(async () => {
-        try {
-          const latest = await MessageService.getLatestMessagesForContacts(user.id, allContacts, 1, { sinceDays: 90 });
-          setMessages(prev => {
-            const next = { ...prev };
-            for (const cid of Object.keys(latest)) {
-              const existing = next[cid] || [];
-              const incoming = latest[cid] || [];
-              const existingIds = new Set(existing.map(m => m.id));
-              const unique = incoming.filter(m => !existingIds.has(m.id));
-              if (unique.length > 0) {
-                next[cid] = [...existing, ...unique].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-              }
+      // Prime latest messages immediately - no setTimeout to prevent flashing
+      try {
+        const latest = await MessageService.getLatestMessagesForContacts(user.id, allContacts, 50, { sinceDays: 90 });
+        setMessages(prev => {
+          const next = { ...prev };
+          for (const cid of Object.keys(latest)) {
+            const existing = next[cid] || [];
+            const incoming = latest[cid] || [];
+            const existingIds = new Set(existing.map(m => m.id));
+            const unique = incoming.filter(m => !existingIds.has(m.id));
+            if (unique.length > 0) {
+              next[cid] = [...existing, ...unique].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
             }
-            return next;
-          });
-        } catch (e) {
-          console.error('Priming latest messages failed (non-blocking):', e);
-        }
-      }, 100);
+          }
+          return next;
+        });
+        console.log('Latest messages loaded immediately for contacts:', Object.keys(latest));
+      } catch (e) {
+        console.error('Priming latest messages failed (non-blocking):', e);
+      }
       
     } catch (error) {
       console.error('Failed to load contacts from database:', error);
@@ -1019,6 +1018,12 @@ const App: React.FC = () => {
                     return { ...prev, [userMessage.contactId]: updatedMessages };
                 });
                 // Kick off typewriter stream in UI after full text is known
+                console.log('🚀 Setting UI AI Stream:', { 
+                    contactId: userMessage.contactId, 
+                    messageId: aiMessageId, 
+                    textLength: finalAiMessage.text?.length || 0,
+                    textPreview: finalAiMessage.text?.substring(0, 50) + '...'
+                });
                 setUiAiStream({ contactId: userMessage.contactId, messageId: aiMessageId, text: finalAiMessage.text });
             } catch (error) {
                 console.error('Failed to save AI response to database:', error);
@@ -1035,16 +1040,25 @@ const App: React.FC = () => {
         });
     } finally {
         setIsLoading(false);
-        // Ensure UI switches away from streaming mode
-        setUiAiStream(null);
-        // Mark user message as read when AI finishes responding (both 1-on-1 and group chats)
-        setMessages(prev => {
-            const contactMessages = prev[userMessage.contactId] || [];
-            const updatedMessages = contactMessages.map(msg =>
-                msg.id === userMessage.id ? { ...msg, status: 'read' as const } : msg
-            );
-            return { ...prev, [userMessage.contactId]: updatedMessages };
-        });
+        // Calculate dynamic delay based on response length for streaming
+        const responseLength = finalAiMessage.text?.length || 0;
+        const streamingDelay = Math.min(Math.max(responseLength * 15 + 1000, 2000), 10000); // 15ms per char + 1s buffer, min 2s, max 10s
+        
+        console.log('🔄 Delaying UI AI Stream clear to allow streaming', { responseLength, delay: streamingDelay });
+        setTimeout(() => {
+            console.log('🔄 Clearing UI AI Stream after delay');
+            setUiAiStream(null);
+            
+            // Mark user message as read ONLY after AI response streaming is complete
+            console.log('📖 Marking user message as read after AI response completion');
+            setMessages(prev => {
+                const contactMessages = prev[userMessage.contactId] || [];
+                const updatedMessages = contactMessages.map(msg =>
+                    msg.id === userMessage.id ? { ...msg, status: 'read' as const } : msg
+                );
+                return { ...prev, [userMessage.contactId]: updatedMessages };
+            });
+        }, streamingDelay);
     }
   }, [setMessages, setIsLoading]);
 
@@ -1517,8 +1531,8 @@ const App: React.FC = () => {
 
 
     return (
-    <>{/* Mobile Layout (Motion / motion.dev slide in/out) */}
-<div className="md:hidden relative w-full h-screen overflow-hidden">
+    <div className="h-[100dvh] overflow-hidden">{/* Mobile Layout (Motion / motion.dev slide in/out) */}
+        <div className="md:hidden relative w-full h-[100dvh] overflow-hidden m-0 p-0">
   <AnimatePresence initial={false} mode="wait">
     {!selectedContact ? (
       <motion.div
@@ -1599,7 +1613,7 @@ const App: React.FC = () => {
 </div>
 
       {/* Desktop Layout */}
-      <div className="hidden md:flex h-screen">
+              <div className="hidden md:flex h-[100dvh] overflow-hidden">
         <SidebarProvider
           style={{ "--sidebar-width": `${sidebarWidth}px` } as React.CSSProperties}
         >
@@ -1625,7 +1639,7 @@ const App: React.FC = () => {
           }}
         />
   
-        <SidebarInset className="h-screen shadow-lg flex flex-1 overflow-hidden">
+                  <SidebarInset className="shadow-lg flex flex-1 overflow-hidden m-0 p-0 min-h-0">
           <ChatView
             contact={selectedContact || undefined}
             currentUser={user}
@@ -1721,7 +1735,7 @@ const App: React.FC = () => {
       )}
   
 
-    </>
+    </div>
   );
 }
 

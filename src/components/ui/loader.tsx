@@ -1,3 +1,5 @@
+"use client"
+
 import { cn } from "@/lib/utils"
 import React from "react"
 
@@ -71,7 +73,7 @@ export function ClassicLoader({
         {[...Array(12)].map((_, i) => (
           <div
             key={i}
-            className="bg-primary absolute animate-[spinner-fade_1.2s_linear_infinite] rounded-full"
+            className="bg-primary absolute animate-[relay-ai-spinner-fade_1.2s_linear_infinite] rounded-full"
             style={{
               top: "0",
               left: "50%",
@@ -107,7 +109,7 @@ export function PulseLoader({
 
   return (
     <div className={cn("relative", sizeClasses[size], className)}>
-      <div className="border-primary absolute inset-0 animate-[thin-pulse_1.5s_ease-in-out_infinite] rounded-full border-2" />
+      <div className="border-primary absolute inset-0 animate-[relay-ai-thin-pulse_1.5s_ease-in-out_infinite] rounded-full border-2" />
       <span className="sr-only">Loading</span>
     </div>
   )
@@ -129,7 +131,7 @@ export function PulseDotLoader({
   return (
     <div
       className={cn(
-        "bg-primary animate-[pulse-dot_1.2s_ease-in-out_infinite] rounded-full",
+        "bg-primary animate-[relay-ai-pulse-dot_1.2s_ease-in-out_infinite] rounded-full",
         sizeClasses[size],
         className
       )}
@@ -170,7 +172,7 @@ export function DotsLoader({
         <div
           key={i}
           className={cn(
-            "bg-primary animate-[bounce-dots_1.4s_ease-in-out_infinite] rounded-full",
+            "bg-primary animate-[relay-ai-bounce-dots_1.4s_ease-in-out_infinite] rounded-full",
             dotSizes[size]
           )}
           style={{
@@ -214,7 +216,7 @@ export function TypingLoader({
         <div
           key={i}
           className={cn(
-            "bg-primary animate-[typing_1s_infinite] rounded-full",
+            "bg-primary animate-[relay-ai-typing_1s_infinite] rounded-full",
             dotSizes[size]
           )}
           style={{
@@ -264,7 +266,7 @@ export function WaveLoader({
         <div
           key={i}
           className={cn(
-            "bg-primary animate-[wave_1s_ease-in-out_infinite] rounded-full",
+            "bg-primary animate-[relay-ai-wave_1s_ease-in-out_infinite] rounded-full",
             barWidths[size]
           )}
           style={{
@@ -303,7 +305,7 @@ export function BarsLoader({
         <div
           key={i}
           className={cn(
-            "bg-primary h-full animate-[wave-bars_1.2s_ease-in-out_infinite]",
+            "bg-primary h-full animate-[relay-ai-wave-bars_1.2s_ease-in-out_infinite]",
             barWidths[size]
           )}
           style={{
@@ -349,12 +351,12 @@ export function TerminalLoader({
         className
       )}
     >
-      <span className={cn("text-primary font-mono", textSizes[size])}>
+      <span className={cn("font-mono", textSizes[size])}>
         {">"}
       </span>
       <div
         className={cn(
-          "bg-primary animate-[blink_1s_step-end_infinite]",
+          "bg-primary animate-[relay-ai-blink_1s_step-end_infinite]",
           cursorSizes[size]
         )}
       />
@@ -381,7 +383,7 @@ export function TextBlinkLoader({
   return (
     <div
       className={cn(
-        "animate-[text-blink_2s_ease-in-out_infinite] font-medium",
+        "animate-[relay-ai-text-blink_2s_ease-in-out_infinite] font-medium",
         textSizes[size],
         className
       )}
@@ -411,7 +413,7 @@ export function TextShimmerLoader({
       className={cn(
         "bg-[linear-gradient(to_right,var(--muted-foreground)_40%,var(--foreground)_60%,var(--muted-foreground)_80%)]",
         "bg-size-[200%_auto] bg-clip-text font-medium text-transparent",
-        "animate-[shimmer_4s_infinite_linear]",
+        "animate-[relay-ai-shimmer-text_4s_infinite_linear]",
         textSizes[size],
         className
       )}
@@ -440,17 +442,17 @@ export function TextDotsLoader({
     <div
       className={cn("inline-flex items-center", className)}
     >
-      <span className={cn("text-primary font-medium", textSizes[size])}>
+      <span className={cn("font-medium", textSizes[size])}>
         {text}
       </span>
       <span className="inline-flex">
-        <span className="text-primary animate-[loading-dots_1.4s_infinite_0.2s]">
+        <span className="animate-[relay-ai-loading-dots_1.4s_infinite_0.2s]">
           .
         </span>
-        <span className="text-primary animate-[loading-dots_1.4s_infinite_0.4s]">
+        <span className=" animate-[relay-ai-loading-dots_1.4s_infinite_0.4s]">
           .
         </span>
-        <span className="text-primary animate-[loading-dots_1.4s_infinite_0.6s]">
+        <span className="animate-[relay-ai-loading-dots_1.4s_infinite_0.6s]">
           .
         </span>
       </span>

@@ -10,6 +10,9 @@ interface VirtualizedListProps<T> {
   className?: string;
   overscan?: number;
   onItemsRendered?: (info: { visibleStartIndex: number; visibleStopIndex: number }) => void;
+  onLoadMore?: () => void;
+  isLoading?: boolean;
+  loadMoreThreshold?: number;
   initialScrollOffset?: number;
   scrollToIndex?: number;
   itemKey?: (index: number, data: T[]) => string | number;
@@ -44,6 +47,9 @@ function VirtualizedList<T>({
   className,
   overscan = 5,
   onItemsRendered,
+  onLoadMore,
+  isLoading = false,
+  loadMoreThreshold = 5,
   initialScrollOffset,
   scrollToIndex,
   itemKey,
@@ -70,6 +76,21 @@ function VirtualizedList<T>({
       listRef.current.scrollTo(initialScrollOffset);
     }
   }, [initialScrollOffset]);
+
+  // Handle load more when user scrolls near the top
+  const handleItemsRendered = useMemo(() => {
+    return (info: { visibleStartIndex: number; visibleStopIndex: number }) => {
+      // Call the original callback if provided
+      if (onItemsRendered) {
+        onItemsRendered(info);
+      }
+
+      // Trigger load more when user scrolls near the top
+      if (onLoadMore && !isLoading && info.visibleStartIndex <= loadMoreThreshold) {
+        onLoadMore();
+      }
+    };
+  }, [onItemsRendered, onLoadMore, isLoading, loadMoreThreshold]);
 
   // Generate item key function for better performance
   const getItemKey = useMemo(() => {
@@ -102,7 +123,7 @@ function VirtualizedList<T>({
         itemSize={itemHeight as (index: number) => number}
         itemData={itemData}
         overscanCount={overscan}
-        onItemsRendered={onItemsRendered}
+        onItemsRendered={handleItemsRendered}
         initialScrollOffset={scrollOffset}
         itemKey={getItemKey}
         className={className}
@@ -120,7 +141,7 @@ function VirtualizedList<T>({
       itemSize={itemHeight as number}
       itemData={itemData}
       overscanCount={overscan}
-      onItemsRendered={onItemsRendered}
+      onItemsRendered={handleItemsRendered}
       initialScrollOffset={scrollOffset}
       itemKey={getItemKey}
       className={className}

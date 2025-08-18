@@ -11,7 +11,7 @@ const Mention = React.forwardRef<
     data-slot="mention"
     ref={ref}
     className={cn(
-      "[--dice-transform-origin:8px] **:data-tag:rounded-full **:data-tag:px-2.5 **:data-tag:py-0.5 **:data-tag:pb-1 **:data-tag:text-[12px] **:data-tag:font-semibold **:data-tag:bg-primary **:data-tag:text-primary-foreground **:data-tag:ring-1 **:data-tag:ring-border/40 dark:**:data-tag:bg-primary dark:**:data-tag:text-primary-foreground",
+      "[--dice-transform-origin:8px] **:data-tag:inline **:data-tag:mr-1",
       className,
     )}
     {...props}

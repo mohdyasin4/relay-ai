@@ -8,6 +8,7 @@ import SearchIcon from "./icons/SearchIcon";
 import CloseIcon from "./icons/CloseIcon";
 import LogOutIcon from "./icons/LogOutIcon";
 import TypingIndicator from "./icons/TypingIndicator";
+import TypingIndicatorWithAvatars from "./TypingIndicatorWithAvatars";
 import { DateUtils } from "../utils/dateUtils";
 import { Button } from "./ui/button";
 
@@ -74,7 +75,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   }, [contacts, searchTerm]);
 
   const sidebarBg =
-    theme === "midnight" ? "dark:bg-black" : "dark:bg-background";
+    theme === "dark" ? "dark:bg-black" : "dark:bg-background";
 
   return (
     <aside
@@ -247,13 +248,19 @@ const Sidebar: React.FC<SidebarProps> = ({
                       >
                         {typingIndicators[contact.id] &&
                         Object.keys(typingIndicators[contact.id]).length > 0 ? (
-                          <span className="flex items-center gap-2">
-                            <span className="italic">
-                              {Object.values(typingIndicators[contact.id])[0]}{" "}
-                              is typing
-                            </span>
-                            <TypingIndicator />
-                          </span>
+                          <TypingIndicatorWithAvatars
+                            typingUsers={Object.entries(typingIndicators[contact.id]).map(([userId, userName]) => {
+                              const user = contacts.find(c => c.id === userId);
+                              return {
+                                id: userId,
+                                name: userName,
+                                avatarUrl: user?.avatarUrl
+                              };
+                            })}
+                            showAvatars={true}
+                            maxAvatars={2}
+                            className="truncate"
+                          />
                         ) : lastMessage?.isForwarded ? (
                           "Forwarded Message"
                         ) : lastMessage?.attachment &&

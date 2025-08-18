@@ -157,7 +157,12 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
                 <p className={`text-sm truncate flex-1 pt-1 ${isUnread ? 'font-medium text-foreground' : 'text-muted-foreground'}`}>
                   {typingIndicators[contact.id] && Object.keys(typingIndicators[contact.id]).length > 0 ? (
                     <span className="flex items-center gap-2">
-                          <span className="italic">{Object.values(typingIndicators[contact.id])[0]} is typing</span>
+                      <span className="italic">
+                        {Object.keys(typingIndicators[contact.id]).length === 1 
+                          ? `${Object.values(typingIndicators[contact.id])[0]} is typing`
+                          : `${Object.values(typingIndicators[contact.id]).slice(0, 2).join(', ')}${Object.keys(typingIndicators[contact.id]).length > 2 ? ' and others' : ''} are typing`
+                        }
+                      </span>
                     </span>
                   ) : lastMessage?.isForwarded ? (
                     'Forwarded Message'
@@ -210,7 +215,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
   ), [messages, selectedContactId, unreadCounts, typingIndicators, contacts, user, handleContactClick, onTogglePin]);
 
   return (
-    <ShSidebar collapsible="offcanvas" variant="sidebar" className="md:relative sidebar-mobile-full" {...sidebarProps}>
+    <ShSidebar collapsible="offcanvas" variant="inset" className="md:relative sidebar-mobile-full" {...sidebarProps}>
       <SidebarHeader>
         <div className="flex items-center justify-between px-2">
           <NavUser
