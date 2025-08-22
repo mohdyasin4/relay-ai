@@ -10,7 +10,7 @@
 [![React](https://img.shields.io/badge/React-19-blue.svg)](https://reactjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue.svg)](https://www.typescriptlang.org/)
 [![Supabase](https://img.shields.io/badge/Supabase-Ready-green.svg)](https://supabase.io/)
-[![AI Powered](https://img.shields.io/badge/AI-Gemini%202.5%20Flash-orange.svg)](https://ai.google.dev/)
+[![AI Powered](https://img.shields.io/badge/AI-Gemini%202.5%20Pro-orange.svg)](https://ai.google.dev/)
 
 [🎯 Features](#-features) • [🚀 Quick Start](#-quick-start) • [📸 Screenshots](#-screenshots) • [🛠️ Tech Stack](#️-tech-stack) • [📖 Documentation](#-documentation)
 
@@ -38,7 +38,7 @@
 
 ### 🎨 Key Highlights
 
-- **🤖 AI-Powered Conversations**: Chat with multiple AI personas powered by Google Gemini 2.5 Flash
+- **🤖 AI-Powered Conversations**: Chat with multiple AI personas powered by Google Gemini 2.5 Pro
 - **📱 Real-time Messaging**: Instant message delivery with MQTT protocol
 - **📎 Rich File Sharing**: Support for images, documents, and multimedia with preview
 - **🔐 Enterprise Security**: End-to-end encryption and privacy-first design
@@ -184,7 +184,7 @@
 - **[Row-Level Security](https://supabase.io/docs/guides/auth/row-level-security)** - Database security policies
 
 ### **AI & Intelligence**
-- **[Google Gemini 2.5 Flash](https://ai.google.dev/)** - Advanced AI for conversations
+- **[Google Gemini 2.5 Pro](https://ai.google.dev/)** - Advanced AI for conversations
 - **[AI Vision](https://ai.google.dev/docs/vision)** - Image understanding capabilities
 - **Smart Context Processing** - Contextual conversation understanding
 
