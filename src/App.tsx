@@ -984,11 +984,14 @@ const App: React.FC = () => {
           }
         }
         const fullResponse = collected;
+        
+        // Declare finalAiMessage at function level so it's accessible in finally block
+        let finalAiMessage: Message | null = null;
 
         // Save the final AI response to database and broadcast to other users
         if (fullResponse.trim()) {
             try {
-                const finalAiMessage: Message = {
+                finalAiMessage = {
                     id: aiMessageId,
                     contactId: userMessage.contactId,
                     text: fullResponse.trim(),
@@ -1036,7 +1039,7 @@ const App: React.FC = () => {
                     const currentMessages = prev[userMessage.contactId] || [];
                     const updatedMessages = currentMessages.map(msg => {
                         if (msg.id === aiMessageId) {
-                            return { ...msg, text: finalAiMessage.text };
+                            return { ...msg, text: finalAiMessage?.text };
                         } else if (msg.id === userMessage.id) {
                             return { ...msg, status: 'read' as const };
                         }
@@ -1048,10 +1051,10 @@ const App: React.FC = () => {
                 console.log('🚀 Setting UI AI Stream:', { 
                     contactId: userMessage.contactId, 
                     messageId: aiMessageId, 
-                    textLength: finalAiMessage.text?.length || 0,
-                    textPreview: finalAiMessage.text?.substring(0, 50) + '...'
+                    textLength: finalAiMessage?.text?.length || 0,
+                    textPreview: finalAiMessage?.text?.substring(0, 50) + '...'
                 });
-                setUiAiStream({ contactId: userMessage.contactId, messageId: aiMessageId, text: finalAiMessage.text });
+                setUiAiStream({ contactId: userMessage.contactId, messageId: aiMessageId, text: finalAiMessage?.text });
             } catch (error) {
                 console.error('Failed to save AI response to database:', error);
             }
@@ -1068,7 +1071,7 @@ const App: React.FC = () => {
     } finally {
         setIsLoading(false);
         // Calculate dynamic delay based on response length for streaming
-        const responseLength = finalAiMessage.text?.length || 0;
+        const responseLength = finalAiMessage?.text?.length || 0;
         const streamingDelay = Math.min(Math.max(responseLength * 15 + 1000, 2000), 10000); // 15ms per char + 1s buffer, min 2s, max 10s
         
         console.log('🔄 Delaying UI AI Stream clear to allow streaming', { responseLength, delay: streamingDelay });
