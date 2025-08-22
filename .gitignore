@@ -1,6 +1,7 @@
 # Sensitive environment files
 !.env.example
 !.env.template
+.env
 # Logs
 logs
 *.log
