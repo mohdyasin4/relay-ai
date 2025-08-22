@@ -109,7 +109,7 @@ export class ApiClient {
           recipientId,
           status,
           timestamp,
-          attachmenturl,
+          attachments,
           sender:User!senderId(id, name)
         `)
         .or(`and(senderId.eq.${authData.user.id},recipientId.eq.${contactId}),and(senderId.eq.${contactId},recipientId.eq.${authData.user.id})`)

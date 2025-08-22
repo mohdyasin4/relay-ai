@@ -1,19 +1,26 @@
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 
+// Global singleton instance
+let supabaseInstance: ReturnType<typeof createSupabaseClient> | null = null;
+
 // Create and export a Supabase client singleton
 export const createClient = () => {
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
-  const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+  if (!supabaseInstance) {
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
+    const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+    
+    supabaseInstance = createSupabaseClient(supabaseUrl, supabaseAnonKey, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+        flowType: 'pkce',
+        storageKey: 'relay-auth-session',
+      },
+    });
+  }
   
-  return createSupabaseClient(supabaseUrl, supabaseAnonKey, {
-    auth: {
-      persistSession: true,
-      autoRefreshToken: true,
-      detectSessionInUrl: true,
-      flowType: 'pkce',
-      storageKey: 'relay-auth-session',
-    },
-  });
+  return supabaseInstance;
 };
 
 // For server components/API routes

@@ -11,7 +11,7 @@ export interface DatabaseMessage {
   groupId?: string;
   status: 'sent' | 'delivered' | 'read';
   timestamp: string;
-  attachmenturl?: string;
+  attachments?: any; // JSON field for multiple attachments
   reactions?: string[]; // Array of emoji strings
 }
 
@@ -120,7 +120,7 @@ export class MessageService {
             : (message.timestamp instanceof Date 
                 ? message.timestamp.toISOString() 
                 : new Date().toISOString()),
-          attachmenturl: message.attachment?.url || null,
+          attachments: message.attachments ? JSON.stringify(message.attachments) : undefined,
           isAiMessage: isAiSender,
           // Add reply fields if message has a replyTo property
           replyToId: message.replyTo?.id || null,
@@ -222,12 +222,39 @@ export class MessageService {
       forwardedById: msg.forwardedById || undefined,
       forwardedToContactId: msg.forwardedToContactId || undefined,
       reactions: msg.reactions || [],
-      ...(msg.attachmenturl && { 
-        attachment: { 
-          type: 'image' as const, 
-          url: msg.attachmenturl 
-        } 
-      }),
+      // Parse attachments JSON string and handle multiple attachments
+      ...(msg.attachments && (() => {
+        try {
+          const parsedAttachments = typeof msg.attachments === 'string' 
+            ? JSON.parse(msg.attachments) 
+            : msg.attachments;
+          
+          if (Array.isArray(parsedAttachments) && parsedAttachments.length > 0) {
+            return {
+              attachments: parsedAttachments.map(att => ({
+                type: att.type || 'image',
+                url: att.url,
+                fileName: att.fileName,
+                fileSize: att.fileSize,
+                mimeType: att.mimeType
+              })),
+              // Handle legacy single attachment (for backward compatibility)
+              ...(parsedAttachments.length === 1 && {
+                attachment: {
+                  type: parsedAttachments[0].type || 'image',
+                  url: parsedAttachments[0].url,
+                  fileName: parsedAttachments[0].fileName,
+                  fileSize: parsedAttachments[0].fileSize,
+                  mimeType: parsedAttachments[0].mimeType
+                }
+              })
+            };
+          }
+        } catch (error) {
+          console.error('Error parsing attachments JSON:', error);
+        }
+        return {};
+      })()),
       ...(msg.replyToId && {
         replyTo: {
           id: msg.replyToId,
@@ -260,7 +287,7 @@ export class MessageService {
           groupId,
           status,
           timestamp,
-          attachmenturl,
+          attachments,
           isAiMessage,
           replyToId,
           replyToText,
@@ -335,7 +362,7 @@ export class MessageService {
         groupId,
         status,
         timestamp,
-        attachmenturl,
+        attachments,
         isAiMessage,
         isForwarded,
         forwardedFromMessageId,
@@ -429,12 +456,39 @@ export class MessageService {
           forwardedById: (msg as any).forwardedById || undefined,
           forwardedToContactId: (msg as any).forwardedToContactId || undefined,
           reactions: reactionsByMessageId[msg.id] || [],
-          ...(msg.attachmenturl && { 
-            attachment: { 
-              type: 'image' as const, 
-              url: msg.attachmenturl 
-            } 
-          }),
+          // Parse attachments JSON string and handle multiple attachments
+          ...(msg.attachments && (() => {
+            try {
+              const parsedAttachments = typeof msg.attachments === 'string' 
+                ? JSON.parse(msg.attachments) 
+                : msg.attachments;
+              
+              if (Array.isArray(parsedAttachments) && parsedAttachments.length > 0) {
+                return {
+                  attachments: parsedAttachments.map(att => ({
+                    type: att.type || 'image',
+                    url: att.url,
+                    fileName: att.fileName,
+                    fileSize: att.fileSize,
+                    mimeType: att.mimeType
+                  })),
+                  // Handle legacy single attachment (for backward compatibility)
+                  ...(parsedAttachments.length === 1 && {
+                    attachment: {
+                      type: parsedAttachments[0].type || 'image',
+                      url: parsedAttachments[0].url,
+                      fileName: parsedAttachments[0].fileName,
+                      fileSize: parsedAttachments[0].fileSize,
+                      mimeType: parsedAttachments[0].mimeType
+                    }
+                  })
+                };
+              }
+            } catch (error) {
+              console.error('Error parsing attachments JSON:', error);
+            }
+            return {};
+          })()),
           ...(msg.replyToId && {
             replyTo: {
               id: msg.replyToId,
@@ -547,24 +601,37 @@ export class MessageService {
    */
   static async saveMessageWithAttachment(
     message: Message, 
-    file: File
+    file: File,
+    chatId?: string
   ): Promise<boolean> {
     try {
-      // Import the uploadAttachment function
-      const { uploadAttachment } = await import('../utils/storageUtils');
+      // Import the StorageService
+      const { StorageService } = await import('./storageService');
       
-      // Upload the file to get its URL
-      const attachmenturl = await uploadAttachment({
-        userId: message.senderId,
-        file,
-      });
+      // Upload the file to get its URL using the new StorageService
+      const uploadResult = await StorageService.uploadFile(file, message.senderId, chatId);
+      
+      // Determine attachment type based on file MIME type
+      let type: 'image' | 'document' | 'audio' | 'video';
+      if (file.type.startsWith('image/')) {
+        type = 'image';
+      } else if (file.type.startsWith('video/')) {
+        type = 'video';
+      } else if (file.type.startsWith('audio/')) {
+        type = 'audio';
+      } else {
+        type = 'document';
+      }
       
       // Create a new message with the attachment URL
       const messageWithAttachment: Message = {
         ...message,
         attachment: {
-          type: 'image',
-          url: attachmenturl
+          type,
+          url: uploadResult.url,
+          fileName: uploadResult.fileName,
+          fileSize: uploadResult.fileSize,
+          mimeType: uploadResult.mimeType
         }
       };
       
@@ -577,16 +644,68 @@ export class MessageService {
   }
 
   /**
+   * Save a message with multiple attachments
+   * This will upload all attachments first, then save the message with attachment URLs
+   */
+  static async saveMessageWithAttachments(
+    message: Message, 
+    files: File[],
+    chatId?: string
+  ): Promise<boolean> {
+    try {
+      // Import the StorageService
+      const { StorageService } = await import('./storageService');
+      
+      // Upload all files to get their URLs
+      const uploadResults = await StorageService.uploadMultipleFiles(files, message.senderId, chatId);
+      
+      // Convert upload results to attachments
+      const attachments = uploadResults.map(result => {
+        let type: 'image' | 'document' | 'audio' | 'video';
+        if (result.mimeType.startsWith('image/')) {
+          type = 'image';
+        } else if (result.mimeType.startsWith('video/')) {
+          type = 'video';
+        } else if (result.mimeType.startsWith('audio/')) {
+          type = 'audio';
+        } else {
+          type = 'document';
+        }
+        
+        return {
+          type,
+          url: result.url,
+          fileName: result.fileName,
+          fileSize: result.fileSize,
+          mimeType: result.mimeType
+        };
+      });
+      
+      // Create a new message with all attachments
+      const messageWithAttachments: Message = {
+        ...message,
+        attachments
+      };
+      
+      // Save the message with all attachment URLs
+      return await this.saveMessage(messageWithAttachments);
+    } catch (error) {
+      console.error('Error saving message with attachments:', error);
+      return false;
+    }
+  }
+
+  /**
    * Delete a message and its attachment if any
    */
   static async deleteMessage(messageId: string): Promise<boolean> {
     const supabase = createClient();
     
     try {
-      // First, get the message to check if it has an attachment
+      // First, get the message to check if it has attachments
       const { data: message, error: fetchError } = await supabase
         .from('Message')
-        .select('attachmenturl')
+        .select('attachments')
         .eq('id', messageId)
         .single();
         
@@ -595,13 +714,25 @@ export class MessageService {
         return false;
       }
       
-      // If there's an attachment, delete it from storage
-      if (message?.attachmenturl) {
+      // If there are attachments, delete them from storage
+      if (message?.attachments && Array.isArray(message.attachments)) {
         try {
-          const { deleteAttachment } = await import('../utils/storageUtils');
-          await deleteAttachment(message.attachmenturl);
+          // Import the StorageService to delete attachments
+          const { StorageService } = await import('./storageService');
+          
+          // Delete each attachment
+          for (const attachment of message.attachments) {
+            if (attachment.url) {
+              try {
+                await StorageService.deleteFile(attachment.url);
+              } catch (deleteError) {
+                console.error('Error deleting attachment from storage:', deleteError);
+                // Continue with other attachments even if one fails
+              }
+            }
+          }
         } catch (storageError) {
-          console.error('Error deleting attachment:', storageError);
+          console.error('Error deleting attachments:', storageError);
           // Continue with message deletion even if attachment deletion fails
         }
       }
@@ -704,7 +835,7 @@ export class MessageService {
           groupId,
           status,
           timestamp,
-          attachmenturl,
+          attachments,
           isAiMessage,
           sender:User!senderId(name, avatarUrl)
         `)
@@ -739,7 +870,7 @@ export class MessageService {
             groupId,
             status,
             timestamp,
-            attachmenturl,
+            attachments,
                       isAiMessage,
           sender:User!senderId(name, avatarUrl)
           `)
@@ -794,12 +925,39 @@ export class MessageService {
           timestamp: msg.timestamp, // Keep as ISO string for consistent date handling
           status: msg.status as 'sent' | 'delivered' | 'read',
           isGroup: !!msg.groupId,
-          ...(msg.attachmenturl && { 
-            attachment: { 
-              type: 'image' as const, 
-              url: msg.attachmenturl 
-            } 
-          }),
+          // Parse attachments JSON string and handle multiple attachments
+          ...(msg.attachments && (() => {
+            try {
+              const parsedAttachments = typeof msg.attachments === 'string' 
+                ? JSON.parse(msg.attachments) 
+                : msg.attachments;
+              
+              if (Array.isArray(parsedAttachments) && parsedAttachments.length > 0) {
+                return {
+                  attachments: parsedAttachments.map(att => ({
+                    type: att.type || 'image',
+                    url: att.url,
+                    fileName: att.fileName,
+                    fileSize: att.fileSize,
+                    mimeType: att.mimeType
+                  })),
+                  // Handle legacy single attachment (for backward compatibility)
+                  ...(parsedAttachments.length === 1 && {
+                    attachment: {
+                      type: parsedAttachments[0].type || 'image',
+                      url: parsedAttachments[0].url,
+                      fileName: parsedAttachments[0].fileName,
+                      fileSize: parsedAttachments[0].fileSize,
+                      mimeType: parsedAttachments[0].mimeType
+                    }
+                  })
+                };
+              }
+            } catch (error) {
+              console.error('Error parsing attachments JSON:', error);
+            }
+            return {};
+          })()),
           ...(msg.replyToId && {
             replyTo: {
               id: msg.replyToId,
@@ -892,7 +1050,7 @@ export class MessageService {
             groupId,
             status,
             timestamp,
-            attachmenturl,
+            attachments,
             isAiMessage,
             isForwarded,
             forwardedFromMessageId,
@@ -931,8 +1089,15 @@ export class MessageService {
               forwardedFromContactId: (msg as any).forwardedFromContactId || undefined,
               forwardedById: (msg as any).forwardedById || undefined,
               forwardedToContactId: (msg as any).forwardedToContactId || undefined,
-              ...(msg.attachmenturl && { 
-                attachment: { type: 'image' as const, url: msg.attachmenturl }
+              // Handle legacy single attachment (for backward compatibility)
+              ...(msg.attachments && Array.isArray(msg.attachments) && msg.attachments.length === 1 && {
+                attachment: {
+                  type: msg.attachments[0].type || 'image',
+                  url: msg.attachments[0].url,
+                  fileName: msg.attachments[0].fileName,
+                  fileSize: msg.attachments[0].fileSize,
+                  mimeType: msg.attachments[0].mimeType
+                }
               }),
               ...(msg.replyToId && {
                 replyTo: {
@@ -961,7 +1126,7 @@ export class MessageService {
             groupId,
             status,
             timestamp,
-            attachmenturl,
+            attachments,
             isAiMessage,
             isForwarded,
             forwardedFromMessageId,
@@ -999,8 +1164,15 @@ export class MessageService {
               forwardedFromContactId: (msg as any).forwardedFromContactId || undefined,
               forwardedById: (msg as any).forwardedById || undefined,
               forwardedToContactId: (msg as any).forwardedToContactId || undefined,
-              ...(msg.attachmenturl && { 
-                attachment: { type: 'image' as const, url: msg.attachmenturl }
+              // Handle legacy single attachment (for backward compatibility)
+              ...(msg.attachments && Array.isArray(msg.attachments) && msg.attachments.length === 1 && {
+                attachment: {
+                  type: msg.attachments[0].type || 'image',
+                  url: msg.attachments[0].url,
+                  fileName: msg.attachments[0].fileName,
+                  fileSize: msg.attachments[0].fileSize,
+                  mimeType: msg.attachments[0].mimeType
+                }
               }),
               ...(msg.replyToId && {
                 replyTo: {
@@ -1038,6 +1210,29 @@ export class MessageService {
     } catch (error) {
       console.error('Error fetching latest messages for contacts:', error);
       return {};
+    }
+  }
+
+  /**
+   * Mark a message as read in the database
+   */
+  static async markMessageAsRead(messageId: string): Promise<boolean> {
+    try {
+      const supabase = createClient();
+      const { error } = await supabase
+        .from('Message')
+        .update({ status: 'read' })
+        .eq('id', messageId);
+
+      if (error) {
+        console.error('Error marking message as read:', error);
+        return false;
+      }
+      
+      return true;
+    } catch (error) {
+      console.error('Error marking message as read:', error);
+      return false;
     }
   }
 }

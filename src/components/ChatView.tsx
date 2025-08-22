@@ -13,19 +13,21 @@ import React, {
 
 import { DatabaseService } from "../services/databaseService";
 import { mqttService } from "../services/mqttService";
-import { fileToBase64 } from "../utils/imageUtils";
+// import { fileToBase64 } from "../utils/imageUtils"; // Not needed with storage service
 import { formatPresence, DateUtils } from "../utils/dateUtils";
 
 import GeneratedAvatar from "./GeneratedAvatar";
-import TypingIndicatorWithAvatars from "./TypingIndicatorWithAvatars";
 import DateSeparator from "./DateSeparator";
+import { FileAttachment } from "./FileAttachment";
+import { FileUpload, FileUploadList, FileUploadItem, FileUploadItemPreview, FileUploadItemDelete, FileUploadItemProgress } from "./ui/file-upload";
+import { StorageService } from "../services/storageService";
 // import NewMessagesSeparator from "./NewMessagesSeparator";
 // import MentionSuggestions from "./MentionSuggestions";
 
 import CloseIcon from "./icons/CloseIcon";
 import PlusIcon from "./icons/PlusIcon";
 import CheckIcon from "./icons/CheckIcon";
-
+import ReplyIcon from "./icons/ReplyIcon";
 // import ChatBubbleLeftRightIcon from "./icons/ChatBubbleLeftRightIcon";
 
 import type {
@@ -42,6 +44,7 @@ import {
   ChatContainerContent,
   ChatContainerScrollAnchor,
 } from "@/components/ui/chat-container";
+import { ScrollButton } from "@/components/ui/scroll-button";
 import {
   PromptInput,
   PromptInputTextarea,
@@ -55,6 +58,8 @@ import {
   MessageActions,
   MessageAction,
 } from "@/components/ui/message";
+import { ReplyPreview } from "./ReplyPreview";
+import { ForwardedMessageIndicator, OtherUserAvatar } from "./ForwardedMessageIndicator";
 // Markdown handled inside MessageContent
 import {
   Clock,
@@ -70,29 +75,27 @@ import {
   ArrowLeft,
   Sparkles,
   Ellipsis,
-  Share2,
+  Paperclip,
 } from "lucide-react";
-import { Paperclip } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import EmojiPickerReact, { SuggestionMode } from "emoji-picker-react";
 import { useTheme } from "./theme-provider";
-import { ScrollButton } from "./ui/scroll-button";
-import { Badge } from "./ui/badge";
-
+// Using custom scroll button instead of ScrollButton component
 import { Mention, MentionContent, MentionInput, MentionItem } from "@/components/ui/mention";
 import { Theme as EmojiTheme } from "emoji-picker-react";
 
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-
+import { useTextStream } from "@/components/ui/response-stream";
 import { cookies } from "@/lib/cookies";
 import { MentionText } from "@/components/ui/mention-text";
 import { getSenderColorClass } from "@/utils/colorUtils";
 import { MessageService } from "@/services/messageService";
+import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarGroup, Popover as HeroPopover, PopoverTrigger as HeroPopoverTrigger, PopoverContent as HeroPopoverContent, Button as HeroButton } from "@heroui/react";
-//
+import { Download, X } from "lucide-react";
 
 // Memoized components for better performance
-const MemoizedGeneratedAvatar = memo(GeneratedAvatar);
+
 const MemoizedMentionText = memo(MentionText);
 
 interface ChatViewProps {
@@ -105,7 +108,8 @@ interface ChatViewProps {
   onSendMessage: (
     text: string,
     attachment?: Attachment,
-    replyInfo?: { replyTo: Message["replyTo"] }
+    replyInfo?: { replyTo: Message["replyTo"] },
+    additionalAttachments?: Attachment[]
   ) => void;
   onImageClick: (url: string) => void;
   onEditGroup: (group: Contact) => void;
@@ -140,7 +144,8 @@ const MessageItem = memo(({
   setReplyingTo,
   openEmojiForMessageId,
   setOpenEmojiForMessageId,
-  currentUser
+  currentUser,
+  handleImagePreview
 }: {
   msg: Message;
   isSelf: boolean;
@@ -159,6 +164,7 @@ const MessageItem = memo(({
   openEmojiForMessageId: string | null;
   setOpenEmojiForMessageId: (id: string | null) => void;
   currentUser: User;
+  handleImagePreview: (imageData: { url: string; fileName?: string; fileSize?: number }) => void;
 }) => {
   const getMentionClassesForKey = useCallback((key: string) => getSenderColorClass(key), []);
 
@@ -177,25 +183,12 @@ const MessageItem = memo(({
     return null;
   }, [isSelf, msg.status]);
 
-  const isStreamingThis = useMemo(() => {
-    const isAiContact = contact.isAi;
-    const isGroupWithAi = contact.isGroup && aiPersonas.some(ai => ai.id === msg.senderId);
-    const hasAiStream = !!aiStream;
-    const messageMatches = aiStream?.messageId === msg.id;
-    
-    console.log('isStreamingThis check:', {
-      msgId: msg.id,
-      isAiContact,
-      isGroupWithAi, 
-      hasAiStream,
-      aiStreamMessageId: aiStream?.messageId,
-      messageMatches,
-      aiStreamText: aiStream?.text?.length || 0,
-      result: (isAiContact || isGroupWithAi) && hasAiStream && messageMatches
-    });
-    
-    return (isAiContact || isGroupWithAi) && hasAiStream && messageMatches;
-  }, [contact.isAi, contact.isGroup, aiPersonas, aiStream?.messageId, msg.senderId, msg.id]);
+  const isStreamingThis = useMemo(() =>
+    (contact.isAi || (contact.isGroup && aiPersonas.some(ai => ai.id === msg.senderId))) &&
+    !!aiStream &&
+    aiStream!.messageId === msg.id,
+    [contact.isAi, contact.isGroup, aiPersonas, aiStream?.messageId, msg.senderId, msg.id]
+  );
 
   const isAiSender = useMemo(() => {
     // Check if message has AI-specific fields
@@ -214,8 +207,8 @@ const MessageItem = memo(({
              hasAiFields ||
              isAiByName;
       
-      // Debug logging for AI detection
-      if (hasAiFields || isAiByName) {
+      // Debug logging for AI detection (development only)
+      if (import.meta.env?.MODE === 'development' && (hasAiFields || isAiByName)) {
         console.log('AI detection (direct):', {
           senderId: msg.senderId,
           senderName: senderName,
@@ -237,8 +230,8 @@ const MessageItem = memo(({
                     hasAiFields || 
                     isAiByName;
       
-      // Debug logging for AI detection
-      if (hasAiFields || isAiByName) {
+      // Debug logging for AI detection (development only)
+      if (import.meta.env?.MODE === 'development' && (hasAiFields || isAiByName)) {
         console.log('AI detection (group):', {
           senderId: msg.senderId,
           senderName: senderName,
@@ -256,101 +249,10 @@ const MessageItem = memo(({
     return false;
   }, [contact.isGroup, contact.isAi, msg.senderId, msg.senderName, aiPersonas, msg]);
 
-  // Custom streaming implementation
-  const [hasReceivedResponse, setHasReceivedResponse] = useState(false);
-  const [displayedCharCount, setDisplayedCharCount] = useState(0);
-  const [fullResponse, setFullResponse] = useState("");
-  const [isStreamingActive, setIsStreamingActive] = useState(false);
-  const streamingIntervalRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Debug the overall streaming state
-  useEffect(() => {
-    console.log('Streaming state update:', {
-      isStreamingThis,
-      messageId: aiStream?.messageId,
-      hasText: !!aiStream?.text,
-      textLength: aiStream?.text?.length || 0
-    });
-  }, [isStreamingThis, aiStream]);
-
-  // Reset when streaming starts/stops
-  useEffect(() => {
-    if (isStreamingThis && aiStream?.messageId) {
-      console.log('🔄 Resetting for new stream:', aiStream.messageId);
-      setHasReceivedResponse(false);
-      setDisplayedCharCount(0);
-      setFullResponse("");
-      setIsStreamingActive(false);
-      if (streamingIntervalRef.current) {
-        clearInterval(streamingIntervalRef.current);
-        streamingIntervalRef.current = null;
-      }
-    }
-  }, [isStreamingThis, aiStream?.messageId]);
-
-  // Track when we receive the response
-  useEffect(() => {
-    console.log('Response check:', {
-      isStreamingThis,
-      hasText: !!aiStream?.text,
-      hasReceivedResponse,
-      textPreview: aiStream?.text?.substring(0, 50) + '...'
-    });
-    
-    if (isStreamingThis && aiStream?.text && !hasReceivedResponse) {
-      console.log('📝 AI response received, will start streaming:', aiStream.text.length, 'characters');
-      console.log('Response preview:', aiStream.text.substring(0, 100) + '...');
-      setFullResponse(aiStream.text);
-      // Small delay to show thinking state
-      setTimeout(() => {
-        console.log('🚀 Starting streaming...');
-        setHasReceivedResponse(true);
-        setIsStreamingActive(true);
-        setDisplayedCharCount(0);
-      }, 1000);
-    }
-  }, [isStreamingThis, aiStream?.text, hasReceivedResponse]);
-
-  // Custom character-by-character streaming
-  useEffect(() => {
-    if (isStreamingActive && fullResponse && displayedCharCount < fullResponse.length) {
-      streamingIntervalRef.current = setInterval(() => {
-        setDisplayedCharCount(prev => {
-          const next = prev + 1;
-          console.log('Streaming char:', next, '/', fullResponse.length);
-          if (next >= fullResponse.length) {
-            console.log('Streaming complete!');
-            setIsStreamingActive(false);
-            if (streamingIntervalRef.current) {
-              clearInterval(streamingIntervalRef.current);
-              streamingIntervalRef.current = null;
-            }
-          }
-          return next;
-        });
-                   }, 15); // 15ms per character - faster typing
-    }
-
-    return () => {
-      if (streamingIntervalRef.current) {
-        clearInterval(streamingIntervalRef.current);
-      }
-    };
-  }, [isStreamingActive, fullResponse, displayedCharCount]);
-
-          const aiDisplayedText = useMemo(() => {
-          if (!isStreamingThis) return "";
-          if (!hasReceivedResponse) {
-            console.log('Still thinking...');
-            return ""; // Show thinking state
-          }
-          const text = fullResponse.slice(0, displayedCharCount);
-          console.log('Displaying:', text.length, '/', fullResponse.length, 'chars');
-          // Ensure we return a valid string and handle incomplete markdown
-          const safeText = typeof text === 'string' ? text : String(text || '');
-          // Additional safety: ensure we don't have any object-like content
-          return safeText.toString();
-        }, [isStreamingThis, hasReceivedResponse, fullResponse, displayedCharCount]);
+  const aiDisplayedText = useMemo(() =>
+    isStreamingThis ? (aiStream?.text || "") : "",
+    [isStreamingThis, aiStream?.text]
+  );
 
   const textToRender = useMemo(() =>
     (msg.text || "").toString(),
@@ -363,244 +265,10 @@ const MessageItem = memo(({
     return emojiRegex.test(textToRender.trim());
   }, [textToRender]);
 
-  // Memoized message content rendering
-  const messageContent = useMemo(() => {
-    // AI response rendering with typewriter effect
-    if (isStreamingThis) {
-      // Show thinking indicator until we have response
-      if (!hasReceivedResponse) {
-        return (
-          <div className={`bg-muted/70 text-foreground px-4 py-3 rounded-2xl rounded-tl-none max-w-2xl min-w-[120px] pb-7 backdrop-blur-sm border border-border/60 shadow-sm`}>
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <Loader variant="text-shimmer" text="AI is thinking" />
-            </div>
-          </div>
-        );
-      }
-      // Render the streaming AI response with proper markdown
-      return (
-        <MemoizedMessageContent
-          markdown={true}
-          className={`bg-muted/70 text-foreground rounded-2xl rounded-tl-none prose-h2:mt-0! prose-h2:scroll-m-0! px-4 py-3 break-words max-w-2xl min-w-[80px] pb-7 backdrop-blur-sm border border-border/60 shadow-sm`}
-          theme={theme.theme}
-          copied={copied}
-          setCopied={setCopied}
-          handleCopy={handleCopy}
-          resolveMentionContact={(id) => {
-            const c = allKnownContacts.find((x) => x.id === id || x.name === id)
-            return c ? { name: c.name, avatarUrl: (c as any).avatarUrl } : undefined
-          }}
-          id={msg.id}
-        >
-          {aiDisplayedText || ""}
-        </MemoizedMessageContent>
-      );
-    }
-
-    // Post-stream or regular rendering
-    if (!textToRender.trim()) {
-      if (isAiSender) {
-        return (
-          <div className={`bg-muted/70 text-foreground px-4 py-3 rounded-2xl rounded-tl-none max-w-2xl min-w-[120px] pb-7 backdrop-blur-sm border border-border/60 shadow-sm`}>
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <Loader variant="text-shimmer" text="AI is thinking" />
-            </div>
-          </div>
-        );
-      }
-      return null;
-    }
-
-    // Emoji-only jumbo
-    if (isEmojiOnly) {
-      return (
-        <MemoizedMessageContent
-          markdown={false}
-          className={`${isSelf ? "bg-transparent text-foreground" : "bg-transparent text-foreground"} prose-h2:mt-0! prose-h2:scroll-m-0! break-words whitespace-pre-wrap min-w-[120px] text-6xl leading-none pb-10 text-center`}
-          copied={copied}
-          setCopied={setCopied}
-          handleCopy={handleCopy}
-        >
-          {textToRender}
-        </MemoizedMessageContent>
-      );
-    }
-
-    // Helper function to detect if text contains markdown patterns
-    const hasMarkdownContent = (text: string): boolean => {
-      const markdownPatterns = [
-        /```[\s\S]*?```/,     // Code blocks
-        /`[^`]+`/,            // Inline code
-        /\*\*[^*]+\*\*/,      // Bold
-        /\*[^*]+\*/,          // Italic
-        /#{1,6}\s+/,          // Headers
-        /^\s*[-*+]\s/m,       // List items
-        /^\s*\d+\.\s/m,       // Numbered lists
-        /\[([^\]]+)\]\(([^)]+)\)/, // Links
-        /!\[([^\]]*)\]\(([^)]+)\)/, // Images
-      ];
-      return markdownPatterns.some(pattern => pattern.test(text));
-    };
-
-    // Use markdown for AI messages, forwarded messages, or user messages with markdown content
-    if (isAiSender || msg.isForwarded || hasMarkdownContent(textToRender)) {
-      // Reduced noisy debug logging; keep lightweight flag only in dev
-      // if (import.meta.env?.MODE === 'development' && textToRender.includes('```')) {
-      //   console.debug('AI markdown render', { len: textToRender.length, contact: contact.name });
-      // }
-      
-
-      
-      // Different styling for AI, forwarded, and user markdown messages
-      let messageClass;
-      if (msg.isForwarded) {
-        messageClass = `bg-blue-50/60 dark:bg-blue-950/30 text-foreground rounded-2xl ${isSelf ? "rounded-tr-none" : "rounded-tl-none"} prose-h2:mt-0! prose-h2:scroll-m-0! px-4 py-3 break-words max-w-2xl min-w-[110px] pb-7 backdrop-blur-sm border border-blue-200/40 dark:border-blue-800/40 shadow-sm inter-double-storey`;
-      } else if (isAiSender) {
-        messageClass = `bg-amber-700/10 text-foreground rounded-2xl rounded-tl-none prose-h2:mt-0! prose-h2:scroll-m-0! px-4 py-3 break-words max-w-2xl min-w-[110px] pb-7 backdrop-blur-sm border border-amber-500/60 shadow-sm inter-double-storey`;
-      } else {
-        // User message with markdown content
-        const baseClass = isSelf
-          ? "bg-primary/20 text-foreground border border-primary/40 ring-1 ring-primary/20"
-          : "bg-card/70 text-foreground border-2 border-border/60";
-        messageClass = `${baseClass} rounded-2xl ${isSelf ? "rounded-tr-none" : "rounded-tl-none"} prose-h2:mt-0! prose-h2:scroll-m-0! px-4 py-3 break-words max-w-2xl min-w-[110px] pb-7 backdrop-blur-sm shadow-sm inter-double-storey`;
-      }
-      
-      return (
-        <div className={messageClass}>
-          {/* Nested Reply - Exactly Like Screenshot */}
-          {msg.replyTo && (
-            <motion.div
-              initial={{ opacity: 0, y: -2 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.15, ease: "easeOut" }}
-              className="mb-3 pb-3 border-l-4 border-muted-foreground/30 pl-3 ml-1 relative"
-            >
-              <div 
-                className="p-2 -ml-2"
-
-              >
-                {/* Original sender name */}
-                <div className="flex items-center gap-1.5 mb-1">
-                  <span className="text-xs font-medium text-muted-foreground/90">
-                    {msg.replyTo.senderName}
-                  </span>
-                </div>
-                
-                {/* Original message content */}
-                <div className="text-xs text-muted-foreground/70 leading-tight line-clamp-2">
-        <MemoizedMessageContent
-          markdown={true}
-                    className="chatgpt-markdown max-w-none text-muted-foreground/70 [&>*]:text-xs [&>*]:m-0 [&>p]:leading-tight [&>*]:text-inherit"
-                    theme={theme.theme}
-                    copied={false}
-                    setCopied={() => {}}
-                    handleCopy={() => {}}
-                  >
-                    {msg.replyTo.text || "Click to see attachment"}
-                  </MemoizedMessageContent>
-                </div>
-              </div>
-            </motion.div>
-          )}
-          
-          {/* Main message content */}
-          <MemoizedMessageContent
-            markdown={true}
-            className="chatgpt-markdown max-w-none"
-          theme={theme.theme}
-          copied={copied}
-          setCopied={setCopied}
-          handleCopy={handleCopy}
-          resolveMentionContact={(id) => {
-            const c = allKnownContacts.find((x) => x.id === id || x.name === id)
-            return c ? { name: c.name, avatarUrl: (c as any).avatarUrl } : undefined
-          }}
-          id={msg.id}
-        >
-          {textToRender}
-        </MemoizedMessageContent>
-        </div>
-      );
-    } else {
-      // Non-AI senders: user or other humans
-      const baseClass = isSelf
-        ? "bg-primary/20 text-foreground border border-primary/40 ring-1 ring-primary/20"
-        : "bg-card/70 text-foreground border-2 border-border/60";
-      return (
-        <div className={`${baseClass} rounded-2xl ${isSelf ? "rounded-tr-none" : "rounded-tl-none"} px-4 py-3 break-words max-w-2xl min-w-[110px] pb-7 backdrop-blur-sm shadow-sm`}>
-          {/* Nested Reply for non-markdown messages */}
-          {msg.replyTo && (
-            <motion.div
-              initial={{ opacity: 0, y: -2 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.15, ease: "easeOut" }}
-              className="mb-3 pb-3 border-l-4 border-muted-foreground/30 pl-3 ml-1 relative"
-            >
-              <div 
-                className="p-2 -ml-2"
-
-              >
-                {/* Original sender name */}
-                <div className="flex items-center gap-1.5 mb-1">
-                  <span className="text-xs font-medium text-muted-foreground/90">
-                    {msg.replyTo.senderName}
-                  </span>
-                </div>
-                
-                {/* Original message content */}
-                <div className="text-xs text-muted-foreground/70 leading-tight line-clamp-2">
-                  <MemoizedMentionText
-                    text={msg.replyTo.text || "Click to see attachment"}
-                    contacts={allKnownContacts}
-                    className="text-muted-foreground/70"
-                  />
-                </div>
-              </div>
-            </motion.div>
-          )}
-          
-          <MemoizedMentionText
-            text={textToRender}
-            contacts={allKnownContacts}
-            className={"text-foreground inter-double-storey"}
-          />
-        </div>
-      );
-    }
-  }, [
-    isStreamingThis,
-    hasReceivedResponse,
-    isStreamingActive,
-    aiDisplayedText,
-    textToRender,
-    isEmojiOnly,
-    isAiSender,
-    isSelf,
-    theme.theme,
-    copied,
-    setCopied,
-    handleCopy,
-    allKnownContacts,
-    msg.id,
-    contact.name,
-    sender?.name
-  ]);
-
   return (
-    <div 
-      className={`group flex gap-3 ${isSelf ? "flex-row-reverse" : "flex-row"}`}
-      data-message-id={msg.id}
-    >
+    <div id={msg.id} className={`group flex gap-3 ${isSelf ? "flex-row-reverse" : "flex-row"}`}>
       {/* Avatar */}
-      {!isSelf && (
-        <div className="flex-shrink-0">
-        <MemoizedGeneratedAvatar
-          name={sender?.name || "Unknown"}
-          allContacts={allKnownContacts}
-          currentUser={currentUser}
-        />
-        </div>
-      )}
+      {!isSelf && contact.isGroup && <OtherUserAvatar sender={sender} />}
 
       {/* Message Content */}
       <div className="flex flex-col max-w-[85%] inter-double-storey">
@@ -632,115 +300,288 @@ const MessageItem = memo(({
           </div>
         )}
 
-        {/* Forwarded Message Header - Compact Design */}
-        {msg.isForwarded && (
-          <div className="mb-2 max-w-full">
-            <div className="flex items-center gap-1.5 text-xs text-muted-foreground/80 mb-1">
-              <Share2 className="w-3 h-3" />
-              <span className="font-medium">
-                Forwarded
-                {msg.forwardedFromContactId && (() => {
-                  const fromContact = allKnownContacts.find(c => c.id === msg.forwardedFromContactId);
-                  return fromContact ? ` from ${fromContact.name}` : '';
-                })()}
-              </span>
-            </div>
-          </div>
-        )}
+        {/* Forwarded Message Indicator */}
+        {msg.isForwarded && <ForwardedMessageIndicator />}
 
-
+        {/* Reply Preview */}
+        {msg.replyTo && <ReplyPreview replyTo={msg.replyTo} allKnownContacts={allKnownContacts} />}
 
         {/* Message Bubble */}
         <div className="relative">
-          {messageContent}
+          {/* Message content - handle streaming, attachments, and text */}
+          {(() => {
+    // AI response rendering with typewriter effect
+    if (isStreamingThis) {
+      // Show thinking indicator until we have the first chunk
+      if (aiDisplayedText.length === 0) {
+        return (
+          <div className={`bg-muted/70 text-foreground px-2 py-2 rounded-2xl  max-w-lg w-full backdrop-blur-sm border border-border/60 shadow-sm`}>
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <Loader variant="text-shimmer" text="AI is thinking" />
+            </div>
+          </div>
+        );
+      }
+      // Render the streaming AI response with proper markdown
+      return (
+        <MemoizedMessageContent
+          markdown={true}
+          className={`bg-muted/70 text-foreground rounded-2xl  prose-h2:mt-0! prose-h2:scroll-m-0! px-3 py-2 break-words max-w-lg min-w-[80px] backdrop-blur-sm border border-border/60 shadow-sm`}
+          theme={theme.theme}
+          copied={copied}
+          setCopied={setCopied}
+          handleCopy={handleCopy}
+          resolveMentionContact={(id) => {
+            const c = allKnownContacts.find((x) => x.id === id || x.name === id)
+            return c ? { name: c.name, avatarUrl: (c as any).avatarUrl } : undefined
+          }}
+          id={msg.id}
+        >
+          {aiDisplayedText}
+        </MemoizedMessageContent>
+      );
+    }
 
-          {/* Timestamp and read receipt inside bubble */}
-          <div
-            className={`absolute bottom-2 ${isSelf ? "right-4" : "left-4"} flex items-center gap-2 text-[11px] text-muted-foreground/70`}
-          >
-            <span
-              title={DateUtils.formatFullDateTime(msg.timestamp)}
-            >
-              {DateUtils.formatMessageTime(msg.timestamp, true)}
-            </span>
-            {renderStatusIcon()}
+    // Post-stream or regular rendering
+            if (!textToRender.trim() && !msg.attachment && !msg.attachments?.length) {
+      if (isAiSender) {
+        return (
+          <div className={`bg-muted/70 text-foreground px-2 py-2 rounded-2xl  max-w-lg w-full backdrop-blur-sm border border-border/60 shadow-sm`}>
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <Loader variant="text-shimmer" text="AI is thinking" />
+            </div>
+          </div>
+        );
+      }
+      return null;
+    }
+
+    // Emoji-only jumbo
+    if (isEmojiOnly) {
+      return (
+        <MemoizedMessageContent
+          markdown={false}
+          className={`${isSelf ? "bg-transparent text-foreground" : "bg-transparent text-foreground"} prose-h2:mt-0! prose-h2:scroll-m-0! break-words whitespace-pre-wrap w-full text-6xl leading-none pb-10 text-center`}
+          copied={copied}
+          setCopied={setCopied}
+          handleCopy={handleCopy}
+        >
+          {textToRender}
+        </MemoizedMessageContent>
+      );
+    }
+
+                // Helper function to get all attachments without duplicates
+            const getAllAttachments = () => {
+              const attachments = [];
+              
+              // First check for attachments array
+              if (msg.attachments && msg.attachments.length > 0) {
+                attachments.push(...msg.attachments);
+              } 
+              // Only use single attachment if no attachments array exists
+              else if (msg.attachment) {
+                attachments.push(msg.attachment);
+              }
+              
+              return attachments;
+            };
+
+            const allAttachments = getAllAttachments();
+
+            // Use markdown for AI messages, MentionText for user messages
+            if (isAiSender) {
+      return (
+                <div className="space-y-2">
+                  {/* Text content */}
+                  {textToRender.trim() && (
+        <MemoizedMessageContent
+          markdown={true}
+          className={`bg-muted border border-muted  text-foreground rounded-2xl border prose-h2:mt-0! prose-h2:scroll-m-0! px-2 py-2 break-words max-w-lg w-full backdrop-blur-sm shadow-sm`}
+          theme={theme.theme}
+          copied={copied}
+          setCopied={setCopied}
+          handleCopy={handleCopy}
+          resolveMentionContact={(id) => {
+            const c = allKnownContacts.find((x) => x.id === id || x.name === id)
+            return c ? { name: c.name, avatarUrl: (c as any).avatarUrl } : undefined
+          }}
+          id={msg.id}
+        >
+          {textToRender}
+        </MemoizedMessageContent>
+                  )}
+                  
+                  {/* Render all attachments without duplicates */}
+                  {allAttachments.map((attachment, index) => (
+                    <FileAttachment
+                      key={index}
+                      url={attachment.url}
+                      fileName={attachment.fileName}
+                      fileSize={attachment.fileSize}
+                      mimeType={attachment.mimeType}
+                      className="max-w-sm"
+                      onImagePreview={handleImagePreview}
+                      messageStatus={msg.status as any}
+                      messageTimestamp={msg.timestamp}
+                      isSelf={isSelf}
+                      standalone={false}
+                    />
+                  ))}
+                </div>
+      );
+    } else {
+      // Non-AI senders: user or other humans
+      const hasText = textToRender.trim();
+      const hasAttachments = allAttachments.length > 0;
+      
+      // If only attachments (no text), render without background
+      if (hasAttachments && !hasText) {
+      return (
+          <div className="flex flex-col gap-2">
+            {allAttachments.map((attachment, index) => (
+              <FileAttachment
+                key={index}
+                url={attachment.url}
+                fileName={attachment.fileName}
+                fileSize={attachment.fileSize}
+                mimeType={attachment.mimeType}
+                className="max-w-sm"
+                onImagePreview={handleImagePreview}
+                messageStatus={msg.status as any}
+                messageTimestamp={msg.timestamp}
+                isSelf={isSelf}
+                standalone={true}
+              />
+            ))}
+        </div>
+      );
+    }
+      
+      // For messages with text (with or without attachments)
+      const baseClass = isSelf
+        ? "bg-primary"
+        : "bg-secondary border border-muted";
+
+  return (
+                <div className={`${baseClass} rounded-2xl px-3 py-2 break-words max-w-lg w-full backdrop-blur-sm shadow-sm`}>
+                  {/* Render attachments first (above text) */}
+                  {allAttachments.map((attachment, index) => (
+                    <div key={index} className="mb-2">
+                      <FileAttachment
+                        url={attachment.url}
+                        fileName={attachment.fileName}
+                        fileSize={attachment.fileSize}
+                        mimeType={attachment.mimeType}
+                        className="max-w-sm"
+                        onImagePreview={handleImagePreview}
+                        messageStatus={msg.status as any}
+                        messageTimestamp={msg.timestamp}
+                        isSelf={isSelf}
+                        standalone={false}
+        />
+        </div>
+                  ))}
+                  
+                  {/* Text content */}
+                  {hasText && (
+                    <MemoizedMentionText
+                      text={textToRender}
+                      contacts={allKnownContacts}
+                      className={isSelf ? "text-white inter-double-storey" : "text-foreground inter-double-storey"}
+                    />
+            )}
+          </div>
+              );
+            }
+
+            return null;
+          })()}
+
+          {/* Timestamp and read receipt inside bubble - only show when no attachments */}
+          
           </div>
 
-          {/* Message actions - vertically centered beside the bubble */}
-         
-        </div> 
-        
-
-        {/* Reactions: show only when present, positioned below bubble */}
+        <div className={`mt-1 ${isSelf ? 'flex justify-end' : 'flex justify-start'}`}>
+            <div className="flex items-center gap-3">
+                {/* Reactions: show only when present */}
         {msg.reactions && msg.reactions.length > 0 && (
-          <div className={`mt-1 flex ${isSelf ? "justify-end" : "justify-start"}`}>
-            <div className="flex flex-wrap items-center gap-1 ml-2">
+                  <div className="flex items-center gap-1">
               {Object.entries(
                 msg.reactions.reduce<Record<string, string[]>>((acc, r) => {
                   (acc[r.emoji] ||= []).push(r.userId);
                   return acc;
                 }, {})
-              ).map(([emoji, userIds]) => {
-                const reactedUsers = userIds.map(userId => 
-                  allKnownContacts.find(c => c.id === userId)
-                ).filter((user): user is NonNullable<typeof user> => Boolean(user));
-                
-                const popoverKey = `${msg.id}-${emoji}`;
-                const isPopoverOpen = openEmojiForMessageId === popoverKey;
-                
-                return (
-                  <HeroPopover 
-                    key={popoverKey} 
-                    placement="top"
-                    isOpen={isPopoverOpen}
-                    onOpenChange={(open) => setOpenEmojiForMessageId(open ? popoverKey : null)}
-                  >
-                    <HeroPopoverTrigger>
+                    ).map(([emoji, userIds]) => {
+                      const reactedUsers = userIds.map(userId => 
+                        allKnownContacts.find(c => c.id === userId)
+                      ).filter((user): user is NonNullable<typeof user> => Boolean(user));
+                      
+                      const popoverKey = `${msg.id}-${emoji}`;
+                      const isPopoverOpen = openEmojiForMessageId === popoverKey;
+                      
+                      return (
+                        <HeroPopover 
+                          key={popoverKey} 
+                          placement="top"
+                          isOpen={isPopoverOpen}
+                          onOpenChange={(open) => setOpenEmojiForMessageId(open ? popoverKey : null)}
+                        >
+                          <HeroPopoverTrigger>
                 <Button
                   variant="ghost"
                   size="sm"
-                        className="h-6 px-2 text-xs rounded-full bg-muted/50 hover:bg-muted/80 transition-colors"
+                            className="h-6 px-2 text-xs rounded-full bg-muted/50 hover:bg-muted/80 transition-colors"
                   onClick={() => onReact(msg.id, emoji)}
-                        onMouseEnter={() => setOpenEmojiForMessageId(popoverKey)}
-                        onMouseLeave={() => setOpenEmojiForMessageId(null)}
+                            onMouseEnter={() => setOpenEmojiForMessageId(popoverKey)}
+                            onMouseLeave={() => setOpenEmojiForMessageId(null)}
                 >
                   <span className="mr-1">{emoji}</span>
                   <span className="text-muted-foreground">{userIds.length}</span>
                 </Button>
-                    </HeroPopoverTrigger>
-                    <HeroPopoverContent 
-                      className="p-2 min-w-0"
-                      onMouseEnter={() => setOpenEmojiForMessageId(popoverKey)}
-                      onMouseLeave={() => setOpenEmojiForMessageId(null)}
-                    >
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-1 text-xs font-medium text-foreground">
-                          <span>{emoji}</span>
-                          <span>{userIds.length} {userIds.length === 1 ? 'reaction' : 'reactions'}</span>
-                        </div>
-                        <div className="space-y-0.5">
-                          {reactedUsers.map((user) => (
-                            <div key={user.id} className="flex items-center gap-2">
-                              <Avatar
-                                src={user.avatarUrl}
-                                name={user.name}
-                                size="sm"
-                                className="w-4 h-4"
-                              />
-                              <span className="text-xs text-foreground truncate">
-                                {user.id === currentUser.id ? 'You' : user.name}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </HeroPopoverContent>
-                  </HeroPopover>
-                );
-              })}
+                          </HeroPopoverTrigger>
+                          <HeroPopoverContent 
+                            className="p-2 min-w-0"
+                            onMouseEnter={() => setOpenEmojiForMessageId(popoverKey)}
+                            onMouseLeave={() => setOpenEmojiForMessageId(null)}
+                          >
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-1 text-xs font-medium text-foreground">
+                                <span>{emoji}</span>
+                                <span>{userIds.length} {userIds.length === 1 ? 'reaction' : 'reactions'}</span>
+                              </div>
+                              <div className="space-y-0.5">
+                                {reactedUsers.map((user) => (
+                                  <div key={user.id} className="flex items-center gap-2">
+                                    <Avatar
+                                      src={user.avatarUrl}
+                                      name={user.name}
+                                      size="sm"
+                                      className="w-4 h-4"
+                                    />
+                                    <span className="text-xs text-foreground truncate">
+                                      {user.id === currentUser.id ? 'You' : user.name}
+                                    </span>
+                                  </div>
+              ))}
             </div>
+                            </div>
+                          </HeroPopoverContent>
+                        </HeroPopover>
+                      );
+                    })}
           </div>
         )}
+                
+                {/* Timestamp and read receipt */}
+                <div className="flex items-center gap-2 text-[11px] text-muted-foreground/70">
+                    <span title={DateUtils.formatFullDateTime(msg.timestamp)}>
+                        {DateUtils.formatMessageTime(msg.timestamp, true)}
+                    </span>
+                    {renderStatusIcon()}
+                </div>
+            </div>
+        </div>
       </div>
       <MessageActions
             className={` ${isSelf ? "left-[-44px]" : "right-[-44px]"} hidden md:flex flex-col justify-center items-center gap-1 text-muted-foreground opacity-0 group-hover:opacity-100 transition-all duration-200 pointer-events-none group-hover:pointer-events-auto z-20`}
@@ -898,6 +739,9 @@ const ChatView: React.FC<ChatViewProps> = memo(({
   const [liveContact, setLiveContact] = useState<Contact | undefined>(contact);
   const [inputText, setInputText] = useState("");
   const [attachment, setAttachment] = useState<Attachment | null>(null);
+  const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
+  const [uploadingFiles, setUploadingFiles] = useState<Set<File>>(new Set());
+  const [uploadProgress, setUploadProgress] = useState<Map<File, number>>(new Map());
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   // Deprecated local per-message popover state
   // const [openEmojiForMessageId, setOpenEmojiForMessageId] = useState<string | null>(null);
@@ -906,15 +750,37 @@ const ChatView: React.FC<ChatViewProps> = memo(({
   const [mentionResetKey, setMentionResetKey] = useState(0);
   const [openEmojiForMessageId, setOpenEmojiForMessageId] = useState<string | null>(null);
   
+
+  
+  // Store preview URLs for all files
+  const [filePreviewUrls, setFilePreviewUrls] = useState<Map<File, string>>(new Map());
+  
   // Reset input and mention state when contact changes
   useEffect(() => {
     // When switching contacts, reset state but preserve text if returning quickly
     setAttachment(null);
+    setAttachedFiles([]);
+    // Clean up preview URLs when switching contacts
+    setFilePreviewUrls(prevUrls => {
+      prevUrls.forEach(url => URL.revokeObjectURL(url));
+      return new Map();
+    });
     setReplyingTo(null);
     setComposerEmojiOpen(false);
     // Only clear text when the contact actually changes to a different id
     setMentionResetKey(prev => prev + 1);
   }, [contact?.id]);
+
+  // Cleanup effect for preview URLs on unmount
+  useEffect(() => {
+    return () => {
+      // Clean up all preview URLs when component unmounts
+      setFilePreviewUrls(prevUrls => {
+        prevUrls.forEach(url => URL.revokeObjectURL(url));
+        return prevUrls; // Don't change state during cleanup, just revoke URLs
+      });
+    };
+  }, []);
   
 
   
@@ -928,6 +794,34 @@ const ChatView: React.FC<ChatViewProps> = memo(({
   );
   const [currentDate, setCurrentDate] = useState<string | null>(null);
   const [isLoadingOlder, setIsLoadingOlder] = useState<boolean>(false);
+  const [imagePreview, setImagePreview] = useState<{ url: string; fileName?: string; fileSize?: number } | null>(null);
+
+  // Handle ESC key to close image preview
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && imagePreview) {
+        setImagePreview(null);
+      }
+    };
+
+    if (imagePreview) {
+      document.addEventListener('keydown', handleKeyDown);
+      // Prevent body scroll when preview is open
+      document.body.style.overflow = 'hidden';
+    }
+
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      document.body.style.overflow = 'unset';
+    };
+  }, [imagePreview]);
+
+  // Function to handle image preview
+  const handleImagePreview = useCallback((imageData: { url: string; fileName?: string; fileSize?: number }) => {
+    setImagePreview(imageData);
+  }, []);
+
+
 
   // Viewport dimensions for mobile popover positioning
   const [, setViewportDimensions] = useState<{ width: number; height: number }>(() => ({
@@ -967,9 +861,27 @@ const ChatView: React.FC<ChatViewProps> = memo(({
     };
   }, [isComposerEmojiOpen, mobileMessageActions]);
 
+  // Stream only the latest AI message if aiStream is provided
+  const {
+    displayedText: aiDisplayedText,
+    startStreaming: startAiStreaming,
+    reset: resetAiStreaming,
+  } = useTextStream({
+    textStream: aiStream?.stream || aiStream?.text || "",
+    mode: "typewriter",
+    speed: 350,
+  });
+
   // Track whether an AI response is pending streaming to avoid empty bubbles and false typing
   const isStreamingActive = !!aiStream && !!aiStream.messageId;
-  const aiThinking = isStreamingActive;
+  const aiThinking = isStreamingActive && (aiDisplayedText?.length ?? 0) === 0;
+
+  useEffect(() => {
+    if (aiStream && (aiStream.stream || aiStream.text)) {
+      resetAiStreaming();
+      startAiStreaming();
+    }
+  }, [aiStream?.messageId, aiStream?.stream, aiStream?.text, resetAiStreaming, startAiStreaming]);
   // Removed legacy suggestion state (DiceUI Mention handles suggestions)
   const [copied, setCopied] = useState(false);
 
@@ -986,12 +898,13 @@ const ChatView: React.FC<ChatViewProps> = memo(({
     }
   }, [copied]);
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null!);
   // Using PromptInputTextarea internal ref; no local textarea ref needed
-  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const typingDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const typingTimeoutRef = useRef<number | null>(null);
   const separatorRef = useRef<HTMLDivElement>(null);
+  const isUserScrolledUpRef = useRef<boolean>(false);
+  const prevMessagesLengthRef = useRef<number>(messages.length);
+  const prevContactIdRef = useRef<string | undefined>(contact?.id);
   const lastSubmitRef = useRef<{ sig: string; at: number } | null>(null);
   const theme = useTheme()
 
@@ -1032,9 +945,9 @@ const ChatView: React.FC<ChatViewProps> = memo(({
     }
   }, [contact]);
 
-  // Debug logging for contact and message analysis
+  // Debug logging for contact and message analysis (development only)
   useEffect(() => {
-    if (contact && messages.length > 0) {
+    if (import.meta.env?.MODE === 'development' && contact && messages.length > 0) {
       console.log('ChatView Debug:', {
         contactId: contact.id,
         contactName: contact.name,
@@ -1066,9 +979,9 @@ const ChatView: React.FC<ChatViewProps> = memo(({
     [contacts, aiPersonas, currentUser]
   );
 
-  // Debug logging for allKnownContacts
+  // Debug logging for allKnownContacts (development only)
   useEffect(() => {
-    if (contact && contact.isAi) {
+    if (import.meta.env?.MODE === 'development' && contact && contact.isAi) {
       console.log('AI Contact Debug:', {
         contactId: contact.id,
         contactName: contact.name,
@@ -1129,14 +1042,34 @@ const ChatView: React.FC<ChatViewProps> = memo(({
   }, [contact, currentUser, messages]);
 
   useLayoutEffect(() => {
+    // Check if contact changed (new conversation)
+    const contactChanged = contact?.id !== prevContactIdRef.current;
+    
+    // Update previous values for next comparison
+    const hasNewMessages = messages.length > prevMessagesLengthRef.current;
+    prevMessagesLengthRef.current = messages.length;
+    prevContactIdRef.current = contact?.id;
+    
+    // Reset scroll state when switching contacts
+    if (contactChanged) {
+      isUserScrolledUpRef.current = false;
+    }
+    
     // Scroll to bottom before paint to avoid visible jump
     if (firstUnreadMessageId && separatorRef.current) {
       separatorRef.current?.scrollIntoView({
         behavior: "auto",
         block: "center",
       });
-    } else {
-      messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
+    } else if (
+        messagesEndRef.current &&
+        // Only auto-scroll if:
+        // 1. Contact changed (fresh conversation) - always scroll
+        // 2. New messages were added and user hasn't manually scrolled up
+        (contactChanged || (hasNewMessages && !isUserScrolledUpRef.current))
+      ) {
+        // Auto-scroll will be handled by the ChatContainer StickToBottom component
+        messagesEndRef.current.scrollIntoView({ behavior: "auto" });
     }
   }, [
     messages,
@@ -1200,28 +1133,149 @@ const ChatView: React.FC<ChatViewProps> = memo(({
     sendReadReceipt();
   }, [sendReadReceipt]);
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file && file.type.startsWith("image/")) {
-      const url = await fileToBase64(file);
-      setAttachment({ type: "image", file, url });
+  const handleFilesChange = useCallback((files: File[]) => {
+    setAttachedFiles(files);
+    
+    // Clean up old preview URLs and create new ones
+    setFilePreviewUrls(prevUrls => {
+      // Clean up old URLs that are no longer needed
+      prevUrls.forEach((url, file) => {
+        if (!files.includes(file)) {
+          URL.revokeObjectURL(url);
+        }
+      });
+      
+      // Create preview URLs for all files
+      const newPreviewUrls = new Map<File, string>();
+      files.forEach(file => {
+        // Reuse existing URL if file hasn't changed
+        if (prevUrls.has(file)) {
+          newPreviewUrls.set(file, prevUrls.get(file)!);
+        } else {
+          const url = URL.createObjectURL(file);
+          newPreviewUrls.set(file, url);
+        }
+      });
+      
+      return newPreviewUrls;
+    });
+    
+    // Set the first file as the primary attachment for backward compatibility
+    if (files.length > 0 && !attachment) {
+      const firstFile = files[0];
+      let type: 'image' | 'document' | 'audio' | 'video';
+      
+      if (firstFile.type.startsWith('image/')) {
+        type = 'image';
+      } else if (firstFile.type.startsWith('video/')) {
+        type = 'video';
+      } else if (firstFile.type.startsWith('audio/')) {
+        type = 'audio';
+      } else {
+        type = 'document';
+      }
+      
+      // Create URL for the first file if needed
+      const url = URL.createObjectURL(firstFile);
+      
+      setAttachment({ 
+        type, 
+        file: firstFile, 
+        url,
+        fileName: firstFile.name,
+        fileSize: firstFile.size,
+        mimeType: firstFile.type
+      });
+    } else if (files.length === 0) {
+      setAttachment(null);
+      // Clean up all preview URLs
+      setFilePreviewUrls(prevUrls => {
+        prevUrls.forEach(url => URL.revokeObjectURL(url));
+        return new Map();
+      });
     }
-    if (fileInputRef.current) fileInputRef.current.value = "";
+  }, [attachment]);
+
+  const removeAttachedFile = useCallback((fileToRemove: File) => {
+    // Clean up preview URL for the removed file and update state
+    setFilePreviewUrls(prev => {
+      const previewUrl = prev.get(fileToRemove);
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+      }
+      
+      const next = new Map(prev);
+      next.delete(fileToRemove);
+      return next;
+    });
+
+    setAttachedFiles(prev => {
+      const newFiles = prev.filter(f => f !== fileToRemove);
+      
+      // If the removed file was the attachment, clear it or set a new one
+      if (attachment?.file === fileToRemove) {
+        if (newFiles.length > 0) {
+          const nextFile = newFiles[0];
+          let type: 'image' | 'document' | 'audio' | 'video';
+          
+          if (nextFile.type.startsWith('image/')) {
+            type = 'image';
+          } else if (nextFile.type.startsWith('video/')) {
+            type = 'video';
+          } else if (nextFile.type.startsWith('audio/')) {
+            type = 'audio';
+          } else {
+            type = 'document';
+          }
+          
+          // Create new URL for the next file
+          const url = URL.createObjectURL(nextFile);
+          setAttachment({ 
+            type, 
+            file: nextFile, 
+            url,
+            fileName: nextFile.name,
+            fileSize: nextFile.size,
+            mimeType: nextFile.type
+          });
+        } else {
+          setAttachment(null);
+        }
+      }
+      
+      return newFiles;
+    });
+    
+    // Clean up upload progress
+    setUploadProgress(prev => {
+      const next = new Map(prev);
+      next.delete(fileToRemove);
+      return next;
+    });
+    
+    // Remove from uploading files
+    setUploadingFiles(prev => {
+      const next = new Set(prev);
+      next.delete(fileToRemove);
+      return next;
+    });
+  }, [attachment]);
+
+  const formatFileSize = (bytes: number) => {
+    if (bytes === 0) return "0 Bytes";
+    const k = 1024;
+    const sizes = ["Bytes", "KB", "MB", "GB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
   };
 
-  // Emit typing events when input changes via PromptInput (optimized for performance)
+  // Emit typing events when input changes via PromptInput
   useEffect(() => {
     if (!contact || contact.isAi || !currentUser) return;
-    
     const hasText = !!inputText && inputText.trim().length > 0;
     const topic = contact.isGroup
       ? `chat/${contact.id}`
       : contact.topicId || `chat/${[currentUser.id, contact.id].sort().join("-")}`;
-
-    // Clear any existing debounce timer
-    if (typingDebounceRef.current) {
-      clearTimeout(typingDebounceRef.current);
-    }
 
     if (hasText) {
       // Only send 'start' once per typing session
@@ -1236,12 +1290,11 @@ const ChatView: React.FC<ChatViewProps> = memo(({
         mqttService.publish(topic, startPayload);
       }
 
-      // Debounce the stop typing event to reduce MQTT messages
-      typingDebounceRef.current = setTimeout(() => {
+      // Reset debounce timer for 'stop'
       if (typingTimeoutRef.current) {
-          clearTimeout(typingTimeoutRef.current);
+        window.clearTimeout(typingTimeoutRef.current);
       }
-        typingTimeoutRef.current = setTimeout(() => {
+      typingTimeoutRef.current = window.setTimeout(() => {
         const stopPayload: TypingIndicatorPayload = {
           type: "typing",
           contactId: contact.id,
@@ -1251,13 +1304,11 @@ const ChatView: React.FC<ChatViewProps> = memo(({
         };
         mqttService.publish(topic, stopPayload);
         typingTimeoutRef.current = null;
-        }, 2000); // Increased from 1000ms to 2000ms for better performance
-      }, 300); // Debounce typing events by 300ms
+      }, 1000);
     } else {
-      // If text cleared, ensure a single 'stop' after a short delay
-      typingDebounceRef.current = setTimeout(() => {
+      // If text cleared, ensure a single 'stop'
       if (typingTimeoutRef.current) {
-          clearTimeout(typingTimeoutRef.current);
+        window.clearTimeout(typingTimeoutRef.current);
         typingTimeoutRef.current = null;
       }
       const stopPayload: TypingIndicatorPayload = {
@@ -1268,16 +1319,8 @@ const ChatView: React.FC<ChatViewProps> = memo(({
         state: "stop",
       };
       mqttService.publish(topic, stopPayload);
-      }, 500); // Reduced delay for clearing text
     }
-
-    // Cleanup function
-    return () => {
-      if (typingDebounceRef.current) {
-        clearTimeout(typingDebounceRef.current);
-      }
-    };
-  }, [inputText, contact?.id, currentUser?.id, mqttService]);
+  }, [inputText, contact?.id, currentUser?.id]);
 
   // Legacy manual mention selection removed (DiceUI Mention inserts on Enter)
 
@@ -1285,9 +1328,10 @@ const ChatView: React.FC<ChatViewProps> = memo(({
 
   // legacy helpers removed
 
-  const handleSubmit = (e?: React.FormEvent) => {
-    e?.preventDefault();
 
+
+  // Enhanced handleSubmit to work with attachedFiles
+  const handleSubmitWithAttachedFiles = async () => {
     if (typingTimeoutRef.current && contact && !contact.isAi && currentUser) {
       clearTimeout(typingTimeoutRef.current);
       const topic = contact.isGroup
@@ -1306,11 +1350,10 @@ const ChatView: React.FC<ChatViewProps> = memo(({
     }
 
     const trimmed = inputText.trim();
-    // Prevent sending if only '@' or empty
-    if (((trimmed && trimmed !== "@") || attachment) && !isLoading) {
+    // Prevent sending if only '@' or empty and no files
+    if (((trimmed && trimmed !== "@") || attachedFiles.length || attachment) && !isLoading) {
       // De-dup guard
-      const sig = `${trimmed}|${attachment?.url || attachment?.file?.name || ""
-        }`;
+      const sig = `${trimmed}|${attachedFiles.map(f => f.name).join(',') || attachment?.file?.name || ""}`;
       const now = Date.now();
       if (
         lastSubmitRef.current &&
@@ -1333,9 +1376,88 @@ const ChatView: React.FC<ChatViewProps> = memo(({
         }
         : undefined;
 
-      onSendMessage(trimmed, attachment || undefined, replyInfo);
+      // Handle file attachments - upload to Supabase storage and create attachments
+      let fileAttachment = attachment;
+      let additionalAttachments: Attachment[] = [];
+
+      if (attachedFiles.length > 0 && currentUser && contact) {
+        try {
+          // Set uploading state for all files
+          setUploadingFiles(new Set(attachedFiles));
+          
+          // Upload files to Supabase storage
+          const uploadResults = await StorageService.uploadMultipleFiles(
+            attachedFiles,
+            currentUser.id,
+            contact.id, // Pass contact.id as chatId for bucket naming
+            (file, progress) => {
+              setUploadProgress(prev => new Map(prev.set(file, progress)));
+            }
+          );
+
+          // Convert upload results to attachments - put ALL files in additionalAttachments to avoid duplicates
+          for (let i = 0; i < uploadResults.length; i++) {
+            const result = uploadResults[i];
+            const file = attachedFiles[i];
+            
+            let type: 'image' | 'document' | 'audio' | 'video';
+            if (file.type.startsWith('image/')) {
+              type = 'image';
+            } else if (file.type.startsWith('video/')) {
+              type = 'video';
+            } else if (file.type.startsWith('audio/')) {
+              type = 'audio';
+            } else {
+              type = 'document';
+            }
+            
+            const newAttachment = {
+              type,
+              file,
+              url: result.url, // Use the Supabase storage URL
+              fileName: result.fileName,
+              fileSize: result.fileSize,
+              mimeType: result.mimeType
+            };
+
+            // Add ALL uploaded files to additionalAttachments (no primary attachment for uploaded files)
+            additionalAttachments.push(newAttachment);
+          }
+          
+          // Clear fileAttachment if we uploaded files to prevent duplicates
+          if (attachedFiles.length > 0) {
+            fileAttachment = null;
+          }
+          
+          // Clear uploading state
+          setUploadingFiles(new Set());
+          setUploadProgress(new Map());
+          
+// Files uploaded successfully
+        } catch (error) {
+          console.error('Failed to upload files:', error);
+          // Clear uploading state on error
+          setUploadingFiles(new Set());
+          setUploadProgress(new Map());
+          // TODO: Show error message to user
+          return; // Don't send message if upload fails
+        }
+      }
+
+      // Call onSendMessage with multiple attachments support
+      onSendMessage(trimmed, fileAttachment || undefined, replyInfo, additionalAttachments.length > 0 ? additionalAttachments : undefined);
+      
+      // Reset scroll state when sending a message (user expects to see their new message)
+      isUserScrolledUpRef.current = false;
+      
       setInputText("");
       setAttachment(null);
+      setAttachedFiles([]);
+      // Clean up all preview URLs after sending
+      setFilePreviewUrls(prevUrls => {
+        prevUrls.forEach(url => URL.revokeObjectURL(url));
+        return new Map();
+      });
       setReplyingTo(null);
       // Force DiceUI Mention to reset any previous tags
       setMentionResetKey((k) => k + 1);
@@ -1344,25 +1466,9 @@ const ChatView: React.FC<ChatViewProps> = memo(({
 
   // Removed local keydown handling to allow DiceUI Mention to manage Enter/Arrows
 
-  // Transform typing indicators to typing users with avatars (must be before early return)
-  const typingUsers = useMemo(() => {
-    if (!contact || contact.isAi || !typingIndicators || Object.keys(typingIndicators).length === 0) {
-      return [];
-    }
-
-    return Object.entries(typingIndicators).map(([userId, userName]) => {
-      const user = contacts.find(c => c.id === userId);
-      return {
-        id: userId,
-        name: userName,
-        avatarUrl: user?.avatarUrl
-      };
-    });
-  }, [typingIndicators, contact, contacts]);
-
   if (!contact) {
     return (
-      <div className="relative flex-1 flex items-center justify-center h-full p-6 md:p-10 overflow-hidden bg-[radial-gradient(ellipse_at_bottom,color-mix(in_oklch,var(--primary)_25%,transparent),transparent_65%),radial-gradient(ellipse_at_bottom_right,transparent_65%)]">
+      <div className="relative flex-1 flex items-center justify-center h-screen p-6 md:p-10 overflow-hidden bg-[radial-gradient(ellipse_at_bottom,color-mix(in_oklch,var(--primary)_25%,transparent),transparent_65%),radial-gradient(ellipse_at_bottom_right,transparent_65%)]">
          <motion.div
         initial={{ opacity: 0, y: 18 }}
         animate={{ opacity: 1, y: 0 }}
@@ -1399,7 +1505,7 @@ const ChatView: React.FC<ChatViewProps> = memo(({
           Welcome, {currentUser.name}! 👋
         </h1>
         
-        <p className="text-muted-foreground mb-10 max-w-2xl mx-auto leading-relaxed">
+        <p className="text-muted-foreground mb-10 max-w-lg mx-auto leading-relaxed">
           Start a conversation, create a group, or chat with one of our AI assistants. 
           Fast, modern, and real-time messaging.
         </p>
@@ -1473,7 +1579,7 @@ const ChatView: React.FC<ChatViewProps> = memo(({
           setShowOnboarding(o);
           if (!o) cookies.set('relay_onboarding_dismissed_v1', '1', { expires: 365 });
         }}>
-          <DialogContent className="max-w-2xl rounded-3xl">
+          <DialogContent className="max-w-lg rounded-3xl">
             <DialogHeader>
               <DialogTitle>Hi{currentUser?.name ? `, ${currentUser.name}` : ''} 👋</DialogTitle>
               <DialogDescription>Pick a theme to get started. You can change this anytime in Settings.</DialogDescription>
@@ -1660,7 +1766,7 @@ const ChatView: React.FC<ChatViewProps> = memo(({
   };
 
   return (
-    <div className="flex h-full flex-col bg-background overflow-hidden">
+    <div className="flex h-full flex-col bg-background">
       <header className="p-3 md:p-4 border-b flex items-center gap-3 bg-background/80 backdrop-blur-sm z-10">
         {onBack &&
           <Button
@@ -1716,8 +1822,15 @@ const ChatView: React.FC<ChatViewProps> = memo(({
         )}
       </header>
       <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
-        <ChatContainerRoot className="flex-1 overflow-y-auto space-y-0 px-4 pb-4 min-h-0" onScroll={(e) => {
+                <ChatContainerRoot 
+          className="flex-1"
+          onScroll={(e) => {
           const el = e.currentTarget as HTMLElement;
+            
+            // Track if user has scrolled up from bottom
+            const isAtBottom = el.scrollTop >= el.scrollHeight - el.clientHeight - 50; // 50px threshold
+            isUserScrolledUpRef.current = !isAtBottom;
+            
           // Load older messages when reaching the very top
           if (el.scrollTop <= 0 && !isLoadingOlder) {
             const oldest = messages[0];
@@ -1755,8 +1868,9 @@ const ChatView: React.FC<ChatViewProps> = memo(({
             activeIso = nodes[0].getAttribute('data-date-iso');
           }
           setCurrentDate(activeIso ? DateUtils.formatDateSeparator(activeIso) : null);
-        }}>
-<ChatContainerContent className="space-y-4 px-6 py-32 bg-transparent">
+          }}
+        >
+          <ChatContainerContent className="space-y-4 px-8 py-6 bg-transparent">
 {/* Single sticky date header */}
             <div className="sticky top-0 pt-2 z-[6] flex justify-center pointer-events-none">
               {currentDate && (
@@ -1860,6 +1974,7 @@ const ChatView: React.FC<ChatViewProps> = memo(({
                   openEmojiForMessageId={openEmojiForMessageId}
                   setOpenEmojiForMessageId={setOpenEmojiForMessageId}
                   currentUser={currentUser}
+                  handleImagePreview={handleImagePreview}
                 />
               );
             })}
@@ -1889,7 +2004,7 @@ const ChatView: React.FC<ChatViewProps> = memo(({
                     allContacts={allKnownContacts}
                     currentUser={currentUser}
                   />
-                  <div className="px-3 py-2 bg-muted rounded-2xl rounded-tl-none">
+                  <div className="px-3 py-2 bg-muted rounded-2xl ">
                     <Loader variant="text-shimmer" text="AI is thinking" />
                   </div>
                 </div>
@@ -1899,27 +2014,23 @@ const ChatView: React.FC<ChatViewProps> = memo(({
               <motion.div
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 6 }}
-                transition={{ duration: 0.18, ease: "easeInOut" }}
+                transition={{ duration: 0.18, ease: "easeOut" }}
                 key="typing-indicator"
                 className="flex justify-start"
               >
                 <div className="flex items-end gap-2.5">
-                  <div className="flex p-3">
-                    <TypingIndicatorWithAvatars 
-                      typingUsers={typingUsers}
-                      showAvatars={true}
-                      maxAvatars={3}
-                      className="items-center"
-                    />
+                  <div className="flex p-2 bg-muted rounded-2xl ">
+                    <Loader variant="typing" />
                   </div>
+
+                  <div className="text-xs text-muted-foreground pb-1">{typingUserNames[0]} is typing</div>
                 </div>
               </motion.div>
             )}
-            <ChatContainerScrollAnchor />
+                        <ChatContainerScrollAnchor ref={messagesEndRef} />
           </ChatContainerContent>
           <div className="absolute right-7 bottom-20 -translate-y-1/2 z-10">
-            <ScrollButton variant="default" className="shadow-sm" />
+            <ScrollButton />
           </div>
         </ChatContainerRoot>
       </div>
@@ -1936,103 +2047,132 @@ const ChatView: React.FC<ChatViewProps> = memo(({
           }
         />
       </div>
-      <div className="px-4 pb-4 pt-2 z-10">
-        {attachment && (
-          <div className="relative w-24 h-24 mb-2 p-1 border border-slate-300 dark:border-slate-700 rounded-lg">
-            <img
-              src={attachment.url}
-              alt="Attachment preview"
-              className="w-full h-full object-cover rounded"
-            />
+      <div className="m-4 mt-0 z-10 bottom-0 ">
+        {replyingTo && (
+          <div className="mb-2 flex items-start gap-2 bg-slate-200 dark:bg-slate-800 p-2 rounded-lg relative">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center">
+                <ReplyIcon className="w-4 h-4 mr-1 text-primary" />
+                <span className="font-medium text-sm text-primary">
+                  Replying to {replyingTo.senderName}
+                </span>
+              </div>
+              <p className="text-sm text-slate-600 dark:text-slate-400 truncate">
+                {replyingTo.text}
+              </p>
+            </div>
             <button
-              onClick={() => setAttachment(null)}
-              className="absolute -top-2 -right-2 bg-slate-700 text-white rounded-full p-0.5 hover:bg-slate-600"
-              aria-label="Remove attachment"
+              onClick={() => setReplyingTo(null)}
+              className="text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+              aria-label="Cancel reply"
             >
               <CloseIcon className="w-4 h-4" />
             </button>
           </div>
         )}
-        {replyingTo && (
-          <motion.div
-            initial={{ opacity: 0, y: 8, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -8, scale: 0.98 }}
-            transition={{ duration: 0.2, ease: "easeOut" }}
-            className="mb-2 mx-1"
-          >
-            <div className="relative bg-muted/10 dark:bg-muted/8 border border-border/50 rounded-xl px-4 py-3 backdrop-blur-sm shadow-sm hover:shadow-md transition-all duration-200">
-              {/* Header with "Replying to" and close button */}
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2">
-                  <div className="p-1 rounded-md bg-primary/10">
-                    <Reply className="w-3 h-3 text-primary" />
-                  </div>
-                  <span className="text-sm font-medium text-primary">
-                  Replying to {replyingTo.senderName}
-                </span>
-              </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-              onClick={() => setReplyingTo(null)}
-                  className="h-6 w-6 text-muted-foreground/60 hover:text-foreground hover:bg-muted/30 rounded-full transition-colors"
-              aria-label="Cancel reply"
-            >
-                  <CloseIcon className="w-3 h-3" />
-                </Button>
-          </div>
-              
-              {/* Reply content with exact Discord styling */}
-              <div className="flex items-start gap-2">
-                {/* Left gray bar - same as inline replies */}
-                <div className="w-1 h-12 bg-muted-foreground/40 rounded-sm mt-0.5 flex-shrink-0"></div>
+        {/* File Upload Component */}
+        <FileUpload
+          value={attachedFiles}
+          onValueChange={handleFilesChange}
+          maxFiles={10}
+          maxSize={10 * 1024 * 1024} // 10MB
+          multiple={true}
+          accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.txt,.zip,.rar"
+        >
+          {attachedFiles.length > 0 && (
+            <FileUploadList orientation="horizontal" className="mb-3 p-3 bg-muted/30 rounded-lg border">
+              {attachedFiles.map((file, index) => {
+                const fileType = file.type.startsWith('image/') ? 'image' : 
+                               file.type.startsWith('video/') ? 'video' :
+                               file.type.startsWith('audio/') ? 'audio' : 'document';
                 
-                {/* Message content - clickable to scroll to original message */}
-                <div 
-                  className="flex-1 min-w-0 p-1 -m-1"
+                const iconColor = fileType === 'image' ? 'text-blue-600' :
+                                 fileType === 'video' ? 'text-purple-600' :
+                                 fileType === 'audio' ? 'text-green-600' : 'text-gray-600';
+                
+                const bgColor = fileType === 'image' ? 'bg-blue-100 dark:bg-blue-900/20' :
+                               fileType === 'video' ? 'bg-purple-100 dark:bg-purple-900/20' :
+                               fileType === 'audio' ? 'bg-green-100 dark:bg-green-900/20' : 'bg-gray-100 dark:bg-gray-800';
 
-                >
-                  <div className="flex items-baseline gap-1 mb-0.5">
-                    <span className="text-xs font-medium text-muted-foreground/90">
-                      {replyingTo.senderName}
-                    </span>
-                  </div>
-                  <div className="text-sm text-muted-foreground/80 leading-relaxed max-h-20 overflow-y-auto scrollbar-hide">
-                    <MemoizedMessageContent
-                      markdown={true}
-                      className="chatgpt-markdown max-w-none text-muted-foreground/80"
-                      theme={theme.theme}
-                      copied={false}
-                      setCopied={() => {}}
-                      handleCopy={() => {}}
-                    >
-                      {replyingTo.text || "Click to see attachment"}
-                    </MemoizedMessageContent>
-                  </div>
-                </div>
-              </div>
-              
-              {/* Subtle gradient overlay for premium feel */}
-              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-primary/1 to-transparent rounded-xl pointer-events-none" />
-            </div>
-          </motion.div>
-        )}
-        <form onSubmit={handleSubmit} className="flex w-full items-start gap-3">
-  <input
-    type="file"
-    ref={fileInputRef}
-    onChange={handleFileChange}
-    accept="image/*"
-    className="hidden"
-  />
+                const progress = uploadProgress.get(file) || 0;
+                const isUploading = uploadingFiles.has(file);
+
+                // Get the preview URL for this file
+                const previewUrl = filePreviewUrls.get(file);
+
+                return (
+                  <FileUploadItem key={index} value={file} className="relative">
+                    {/* Progress bar using FileUploadItemProgress */}
+                    {isUploading && progress < 100 && (
+                      <FileUploadItemProgress 
+                        style={{ width: `${progress}%` }}
+                        className="absolute inset-0 bg-primary/20 rounded transition-all z-10"
+                      />
+                    )}
+                    
+                    <FileUploadItemPreview className={`${bgColor} relative overflow-hidden`}>
+                      {/* Show image preview if available */}
+                      {fileType === 'image' && previewUrl ? (
+                        <img 
+                          src={previewUrl} 
+                          alt={file.name}
+                          className="w-full h-full object-cover rounded"
+                        />
+                      ) : fileType === 'image' ? (
+                        <svg className={`w-4 h-4 ${iconColor}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                        </svg>
+                      ) : fileType === 'video' ? (
+                        <svg className={`w-4 h-4 ${iconColor}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                        </svg>
+                      ) : fileType === 'audio' ? (
+                        <svg className={`w-4 h-4 ${iconColor}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+                        </svg>
+                      ) : (
+                        <svg className={`w-4 h-4 ${iconColor}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                      )}
+                    </FileUploadItemPreview>
+                    
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium truncate">{file.name}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {formatFileSize(file.size)}
+                        {isUploading && progress < 100 && (
+                          <span className="ml-1">({progress}%)</span>
+                        )}
+                      </div>
+                    </div>
+                    
+                    <FileUploadItemDelete asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 w-6 p-0 hover:bg-destructive hover:text-destructive-foreground rounded-full"
+                        onClick={() => removeAttachedFile(file)}
+                      >
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </Button>
+                    </FileUploadItemDelete>
+                  </FileUploadItem>
+                );
+              })}
+            </FileUploadList>
+          )}
+
+          <form onSubmit={(e) => { e.preventDefault(); handleSubmitWithAttachedFiles(); }} className="flex w-full items-start gap-3">
 
   <PromptInput
     value={inputText}
     onValueChange={setInputText}
     isLoading={isLoading}
-    onSubmit={() => handleSubmit()}
-    className="flex items-center border-input bg-card relative z-10 w-full border rounded-2xl pt-1 shadow-xs"
+    onSubmit={() => handleSubmitWithAttachedFiles()}
+    className="flex items-center border-input bg-card relative z-10 w-full border rounded-2xl pt-1 shadow-xs focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20 transition-all"
   >
     {/* Emoji picker overlay */}
     <div className="relative">
@@ -2059,44 +2199,46 @@ const ChatView: React.FC<ChatViewProps> = memo(({
     {/* Actions before textarea */}
     <div className="flex items-center gap-2 px-3 py-3 w-full">
       <PromptInputActions>
-        <PromptInputAction tooltip="Attach files">
-          <Button variant="outline" size="icon" className="size-9 rounded-full" asChild>
-            <label htmlFor="file-upload" className="cursor-pointer">
-              <>
-                <input
-                  type="file"
-                  onChange={handleFileChange}
-                  className="hidden"
-                  id="file-upload"
-                />
-                <Paperclip className="size-4" />
-              </>
-            </label>
-          </Button>
-        </PromptInputAction>
-        <PromptInputAction tooltip="Emoji">
-          <Button
-            variant="outline"
-            size="icon"
-            className="size-9 rounded-full"
-            type="button"
+        <PromptInputAction 
+          tooltip="Attach files" 
+          icon={Paperclip}
+          variant="ghost"
+          size="md"
+          onClick={() => {
+            // Create a temporary file input
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.multiple = true;
+            input.accept = 'image/*,video/*,audio/*,.pdf,.doc,.docx,.txt,.zip,.rar';
+            input.onchange = (e) => {
+              const files = (e.target as HTMLInputElement).files;
+              if (files && files.length > 0) {
+                handleFilesChange(Array.from(files));
+              }
+            };
+            input.click();
+          }}
+        />
+        <PromptInputAction 
+          tooltip="Emoji" 
+          icon={Smile}
+          variant="ghost"
+          size="md"
             data-emoji-trigger
             onMouseDown={(e) => {
               e.preventDefault();
               setComposerEmojiOpen(true);
             }}
             onClick={() => setComposerEmojiOpen(true)}
-          >
-            <Smile className="size-4" />
-          </Button>
-        </PromptInputAction>
+        />
       </PromptInputActions>
 
       {/* Textarea / Mention input */}
       <div className="flex-1 min-w-0">
+        {contact?.isGroup ? (
           <Mention 
             key={mentionKey}
-            className="w-full [--dice-transform-origin:10px] **:data-tag:rounded-full **:data-tag:text-[12px] **:data-tag:bg-primary **:data-tag:text-primary-foreground dark:**:data-tag:bg-primary dark:**:data-tag:text-primary-foreground"
+            className="w-full [--dice-transform-origin:10px] **:data-tag:rounded-full  **:data-tag:bg-primary **:data-tag:text-primary-foreground dark:**:data-tag:bg-primary dark:**:data-tag:text-primary-foreground"
             inputValue={inputText}
             onInputValueChange={setInputText}
           >
@@ -2108,9 +2250,7 @@ const ChatView: React.FC<ChatViewProps> = memo(({
               <PromptInputTextarea />
             </MentionInput>
             <MentionContent className="data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 relative z-50 min-w-[var(--dice-anchor-width)] overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-md data-[state=closed]:animate-out data-[state=open]:animate-in">
-            {contact?.isGroup ? (
-              // Group chat: show group members
-              (contact.memberIds || [])
+              {(contact.memberIds || [])
                 .filter((id) => id !== currentUser.id)
                 .map((id) => {
                   const member = allKnownContacts.find((c) => c.id === id);
@@ -2130,37 +2270,22 @@ const ChatView: React.FC<ChatViewProps> = memo(({
                       <span className="font-medium">{member.name}</span>
                     </MentionItem>
                   );
-                })
-            ) : (
-              // Direct chat: show the other person and all contacts
-              allKnownContacts
-                .filter((c) => c.id !== currentUser.id && !c.isAi)
-                .map((member) => (
-                  <MentionItem
-                    key={member.id}
-                    value={member.name}
-                    className="relative flex w-full cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-hidden data-disabled:pointer-events-none data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:opacity-50"
-                  >
-                    <GeneratedAvatar
-                      key={member.id + "-avatar"}
-                      name={member.name}
-                      allContacts={allKnownContacts}
-                      currentUser={currentUser}
-                    />
-                    <span className="font-medium">{member.name}</span>
-                  </MentionItem>
-                ))
-            )}
-          </MentionContent>
-        </Mention>
+                })}
+            </MentionContent>
+          </Mention>
+        ) : (
+          <PromptInputTextarea
+            placeholder="Type a message..."
+            className="flex w-full text-base leading-[1.3] px-3 py-2 self-center"
+          />
+        )}
       </div>
 
       {/* Send button */}
       <Button
-        size="icon"
-        disabled={!inputText.trim() && !attachment}
-        onClick={handleSubmit}
-        className="size-9 rounded-full"
+        disabled={!inputText.trim() && !attachment && !attachedFiles.length}
+        onClick={handleSubmitWithAttachedFiles}
+        className="h-10 px-6 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-all duration-200 font-medium shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
         type="button"
       >
         <Send className="size-4" />
@@ -2168,7 +2293,7 @@ const ChatView: React.FC<ChatViewProps> = memo(({
     </div>
   </PromptInput>
 </form>
-
+        </FileUpload>
 
         {/* Mobile Message Actions Popover */}
         {mobileMessageActions && (
@@ -2263,6 +2388,88 @@ const ChatView: React.FC<ChatViewProps> = memo(({
               </div>
             </div>
           </div>
+        )}
+
+        {/* Fullscreen Image Preview Overlay */}
+        {imagePreview && (
+          <motion.div
+            className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            onClick={() => setImagePreview(null)}
+          >
+            {/* Close and Download buttons */}
+            <div className="absolute top-4 right-4 z-10 flex gap-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                className="bg-black/50 hover:bg-black/70 text-white border-white/20 backdrop-blur-sm"
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  try {
+                    // Fetch the image as blob to force download
+                    const response = await fetch(imagePreview.url);
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.download = imagePreview.fileName || 'image.png';
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    window.URL.revokeObjectURL(url);
+                  } catch (error) {
+                    console.error('Download failed:', error);
+                    // Fallback to simple download
+                    const link = document.createElement('a');
+                    link.href = imagePreview.url;
+                    link.download = imagePreview.fileName || 'image.png';
+                    link.click();
+                  }
+                }}
+              >
+                <Download className="w-4 h-4 mr-2" />
+                Download
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                className="bg-black/50 hover:bg-black/70 text-white border-white/20 backdrop-blur-sm"
+                onClick={() => setImagePreview(null)}
+              >
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+
+            {/* File info overlay */}
+            <div className="absolute top-4 left-4 z-10 bg-black/50 text-white px-3 py-2 rounded-lg text-sm backdrop-blur-sm">
+              <div className="font-medium">{imagePreview.fileName || 'Image'}</div>
+              {imagePreview.fileSize && (
+                <div className="text-xs opacity-75">
+                  {(imagePreview.fileSize / 1024 / 1024).toFixed(2)} MB
+                </div>
+              )}
+            </div>
+
+            {/* Fullscreen Image */}
+            <motion.img
+              src={imagePreview.url}
+              alt={imagePreview.fileName || 'Image preview'}
+              className="max-w-[95vw] max-h-[95vh] object-contain rounded-lg shadow-2xl"
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              transition={{ duration: 0.3, ease: "easeOut" }}
+              onClick={(e) => e.stopPropagation()}
+            />
+            
+            {/* ESC to close hint */}
+            <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 text-white/60 text-sm backdrop-blur-sm bg-black/30 px-3 py-1 rounded-full">
+              Press ESC or click outside to close
+            </div>
+          </motion.div>
         )}
       </div>
     </div>

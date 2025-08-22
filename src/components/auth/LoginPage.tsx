@@ -75,7 +75,7 @@ const features = [
             className="flex items-center gap-3 font-semibold text-xl group transition-all duration-300 hover:scale-105"
           >
             <motion.div
-              className="bg-primary text-primary-foreground flex size-8 items-center justify-center rounded-md shadow-lg shadow-primary/25"
+              className="bg-primary text-foreground flex size-8 items-center justify-center rounded-md shadow-lg shadow-primary/25"
               whileHover={{ rotate: 5, scale: 1.1 }}
               whileTap={{ scale: 0.95 }}
               transition={{ type: "spring", stiffness: 400, damping: 17 }}

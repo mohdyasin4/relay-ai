@@ -13,11 +13,13 @@ import ProtectedRoute from "./components/auth/ProtectedRoute";
 import LoginPage from "./components/auth/LoginPage";
 import RegisterPage from "./components/auth/RegisterPage";
 import AuthCallback from "./routes/AuthCallback";
+import EmailVerification from "./routes/EmailVerification";
+import ForgotPasswordPage from "./routes/ForgotPasswordPage";
+import ResetPasswordPage from "./routes/ResetPasswordPage";
 import App from "./App";
 import { ThemeProvider } from "@/components/theme-provider";
 import { queryClient } from "./lib/queryClient";
 import "./index.css";
-import ForgotPasswordPage from "./components/auth/ForgotPasswordPage";
 // import { SidebarProvider } from './components/ui/sidebar';
 import { HeroUIProvider } from "@heroui/react";
 import { Loader } from "./components/ui/loader";
@@ -54,9 +56,17 @@ const AuthGuard: React.FC = () => {
         path="/forgot-password"
         element={user ? <Navigate to="/app" replace /> : <ForgotPasswordPage />}
       />
+      <Route
+        path="/reset-password"
+        element={user ? <Navigate to="/app" replace /> : <ResetPasswordPage />}
+      />
 
       {/* Auth callback route */}
       <Route path="/auth/callback" element={<AuthCallback />} />
+      
+      {/* Email verification routes (both clean and legacy URLs) */}
+      <Route path="/verify/:token" element={<EmailVerification />} />
+      <Route path="/auth/verify" element={<EmailVerification />} />
 
       {/* Protected routes */}
       <Route

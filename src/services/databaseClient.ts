@@ -203,12 +203,16 @@ class DatabaseClient {
   async updateUserStatus(userId: string, status: 'online' | 'offline'): Promise<void> {
     const supabase = createClient();
     
+    const updateData: any = { status };
+    
+    // Only update lastSeen when going offline, preserve it when coming online
+    if (status === 'offline') {
+      updateData.lastSeen = new Date().toISOString();
+    }
+    
     const { error } = await supabase
       .from('User')
-      .update({ 
-        status,
-        lastSeen: status === 'offline' ? new Date().toISOString() : null
-      })
+      .update(updateData)
       .eq('id', userId);
 
     if (error) {

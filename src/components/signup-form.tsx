@@ -150,7 +150,7 @@ export function SignupForm({
         provider: 'google',
         options: {
           redirectTo: redirectUri,
-          scopes: "profile email openid https://www.googleapis.com/auth/contacts.readonly https://www.googleapis.com/auth/contacts.other.readonly",
+          scopes: "profile email openid", // Removed contacts scopes
           queryParams: {
             // Request refresh token to enable session persistence
             access_type: 'offline',

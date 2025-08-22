@@ -84,26 +84,20 @@ function CodeBlockCode({
   }, [code, lang, theme, isVisible])
 
   const classNames = cn(
-    "w-full px-4 dark:bg-black/30 bg-muted/50 overflow-x-auto text-[13px] [&>pre]:px-4 [&>pre]:py-4 font-mono [&_.line]:font-mono [&_code]:font-mono",
+    "w-full px-4 dark:bg-black/30 bg-muted/50 overflow-x-auto text-[13px] [&>pre]:px-4 [&>pre]:py-4",
     className
   )
 
-  // SSR fallback: render plain code if not hydrated yet
-  const shikiFontStyle: React.CSSProperties = {
-    // Force JetBrains Mono for Shiki output
-    ["--shiki-font-family" as any]: "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
-  }
 
   return highlightedHtml ? (
     <div
       ref={containerRef}
       className={classNames}
-      style={shikiFontStyle}
       dangerouslySetInnerHTML={{ __html: highlightedHtml }}
       {...props}
     />
   ) : (
-    <div ref={containerRef} className={classNames} style={shikiFontStyle} {...props}>
+    <div ref={containerRef} className={classNames} {...props}>
       <pre>
         <code>{code}</code>
       </pre>

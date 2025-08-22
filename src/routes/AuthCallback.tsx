@@ -66,6 +66,14 @@ const AuthCallback = () => {
               }
             }
             
+            // Check if this is a password reset flow
+            const type = searchParams.get('type');
+            if (type === 'recovery') {
+              console.log('Password reset flow detected, redirecting to reset password page');
+              window.location.replace('/reset-password');
+              return;
+            }
+            
             // If user data exists, sync with database
             if (data?.user) {
               // Sync user data with our database
@@ -111,6 +119,14 @@ const AuthCallback = () => {
           // The hash will contain access_token, refresh_token, etc.
           const hashParams = new URLSearchParams(location.hash.substring(1));
           const accessToken = hashParams.get('access_token');
+          
+          // Check if this is a password reset flow
+          const type = hashParams.get('type');
+          if (type === 'recovery') {
+            console.log('Password reset flow detected (hash), redirecting to reset password page');
+            window.location.replace('/reset-password');
+            return;
+          }
           
           if (accessToken) {
             const supabase = createClient();

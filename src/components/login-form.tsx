@@ -103,7 +103,7 @@ export function LoginForm({
         provider: 'google',
         options: {
           redirectTo: redirectUri,
-          scopes: "profile email openid https://www.googleapis.com/auth/contacts.readonly https://www.googleapis.com/auth/contacts.other.readonly",
+          scopes: "profile email openid", // Removed contacts scopes
           queryParams: {
             access_type: 'offline',
             prompt: 'consent',
@@ -207,14 +207,6 @@ export function LoginForm({
             <Label htmlFor="password" className="text-foreground font-semibold text-sm">
               Password
             </Label>
-            <motion.a
-              href="/forgot-password"
-              className="text-sm text-primary hover:text-primary/90 font-medium transition-colors duration-200"
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-            >
-              Forgot password?
-            </motion.a>
           </div>
           <div className="relative group">
             <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4 group-focus-within:text-primary transition-colors z-10 pointer-events-none" />
@@ -247,11 +239,20 @@ export function LoginForm({
               {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
           </div>
+          {/* Forgot Password Link */}
+          <div className="flex justify-end">
+            <a
+              href="/forgot-password"
+              className="text-sm text-muted-foreground hover:text-primary transition-colors duration-200"
+            >
+              Forgot password?
+            </a>
+          </div>
           {validationErrors.password && (
             <p className="text-sm text-destructive mt-1">{validationErrors.password}</p>
           )}
         </motion.div>
-        
+      
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
@@ -274,7 +275,6 @@ export function LoginForm({
             </motion.span>
           </TextureButton>
         </motion.div>
-        
         <motion.div 
           className="relative text-center text-sm"
           initial={{ opacity: 0 }}

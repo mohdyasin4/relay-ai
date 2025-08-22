@@ -62,7 +62,7 @@ const INITIAL_COMPONENTS: Partial<Components> = {
       return (
         <span
           className={cn(
-            "bg-muted/80 dark:bg-muted/60 text-foreground rounded-sm px-1.5 py-0.5 font-mono text-sm border border-border/50",
+            "bg-muted/80 dark:bg-muted/60 text-foreground rounded-sm px-1.5 py-0.5 text-sm border border-border/50 font-mono",
             className
           )}
           {...props}
@@ -86,14 +86,14 @@ const INITIAL_COMPONENTS: Partial<Components> = {
     });
     
     return (
-      <CodeBlock className={cn("font-mono", className)}>
+      <CodeBlock className={cn(className)}>
         <CodeBlockHeader
           language={language}
           handleCopy={() => handleCopy?.(codeContent)}
           copied={copied}
           setCopied={setCopied}
         />
-        <CodeBlockCode code={codeContent} language={language} theme={resolvedTheme} className="font-mono" />
+        <CodeBlockCode code={codeContent} language={language} theme={resolvedTheme} />
       </CodeBlock>
     )
   },

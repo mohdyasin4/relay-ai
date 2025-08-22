@@ -13,6 +13,7 @@ import React, {
   useRef,
   useState,
 } from "react"
+import type { LucideIcon } from "lucide-react"
 
 type PromptInputContextType = {
   isLoading: boolean
@@ -83,7 +84,7 @@ function PromptInput({
       >
         <div
           className={cn(
-            "sticky bottom-0 z-20 border-t border-border/50 bg-background/95 backdrop-blur-md supports-[backdrop-filter]:bg-background/80 cursor-text rounded-none shadow-xl",
+            "sticky bottom-0 z-20 border-t border-border/50 bg-background/95 backdrop-blur-md supports-[backdrop-filter]:bg-background/80 cursor-text rounded-none shadow-2xl",
             className
           )}
           onClick={() => textareaRef.current?.focus()}
@@ -199,23 +200,58 @@ function PromptInputActions({
 type PromptInputActionProps = {
   className?: string
   tooltip: React.ReactNode
-  children: React.ReactNode
+  icon: LucideIcon
   side?: "top" | "bottom" | "left" | "right"
+  variant?: "default" | "outline" | "ghost" | "secondary"
+  size?: "sm" | "md" | "lg"
+  onClick?: () => void
+  onMouseDown?: (e: React.MouseEvent) => void
 } & React.ComponentProps<typeof Tooltip>
 
 function PromptInputAction({
   tooltip,
-  children,
+  icon,
   className,
   side = "top",
+  variant = "default",
+  size = "md",
+  onClick,
+  onMouseDown,
   ...props
 }: PromptInputActionProps) {
   const { disabled } = usePromptInput()
 
+  const variantClasses = {
+    default: "bg-primary text-primary-foreground hover:bg-primary/90",
+    outline: "border border-input bg-background hover:bg-accent hover:text-accent-foreground",
+    ghost: "hover:bg-accent hover:text-accent-foreground",
+    secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80"
+  }
+
+  const sizeClasses = {
+    sm: "h-8 w-8",
+    md: "h-10 w-10", 
+    lg: "h-12 w-12"
+  }
+
   return (
     <Tooltip {...props}>
       <TooltipTrigger asChild disabled={disabled} onClick={event => event.stopPropagation()}>
-        {children}
+        <div 
+          className={cn(
+            "inline-flex items-center justify-center rounded-lg transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 cursor-pointer",
+            variantClasses[variant],
+            sizeClasses[size],
+            className
+          )}
+          onClick={onClick}
+          onMouseDown={onMouseDown}
+        >
+          {React.createElement(icon, {
+            size: size === "sm" ? 16 : size === "md" ? 20 : 24,
+            className: "text-current"
+          })}
+        </div>
       </TooltipTrigger>
       <TooltipContent side={side} className={className}>
         {tooltip}

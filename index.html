@@ -5,6 +5,35 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Relay-AI | AI-Powered Real Time Chat Application</title>
+    
+    <!-- Google Analytics -->
+    <script>
+      // Google Analytics - Replace GA_MEASUREMENT_ID with your actual ID
+      (function() {
+        const GA_ID = 'G-H8BLWQRJXV'; // Replace with your Google Analytics Measurement ID (G-XXXXXXXXXX)
+        
+        if (GA_ID && GA_ID !== 'GA_MEASUREMENT_ID') {
+          // Load Google Analytics
+          const script = document.createElement('script');
+          script.async = true;
+          script.src = `https://www.googletagmanager.com/gtag/js?id=${GA_ID}`;
+          document.head.appendChild(script);
+          
+          // Initialize gtag
+          window.dataLayer = window.dataLayer || [];
+          function gtag(){dataLayer.push(arguments);}
+          gtag('js', new Date());
+          gtag('config', GA_ID);
+          
+          // Make gtag available globally
+          window.gtag = gtag;
+          
+          console.log('Google Analytics initialized with ID:', GA_ID);
+        } else {
+          console.log('Google Analytics not configured - please set GA_MEASUREMENT_ID');
+        }
+      })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -101,6 +130,11 @@
         color: #818cf8; /* indigo-400 */
         background-color: rgba(129, 140, 248, 0.15);
       }
+      
+      /* Ensure code blocks use default monospace font instead of Poppins */
+      pre, code, .prose pre, .prose code, .chatgpt-markdown pre, .chatgpt-markdown code {
+        font-family: ui-monospace, SFMono-Regular, 'SF Mono', Consolas, 'Liberation Mono', Menlo, Monaco, 'Cascadia Code', 'Roboto Mono', 'Oxygen Mono', 'Ubuntu Monospace', 'Source Code Pro', 'Fira Mono', 'Droid Sans Mono', 'Courier New', monospace !important;
+      }
     </style>
   <script type="importmap">
 {
@@ -123,17 +157,5 @@
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
-    <script>
-      // Force font features on all text elements
-      document.addEventListener('DOMContentLoaded', function() {
-        const style = document.createElement('style');
-        style.textContent = `
-          * {
-            font-family: 'Poppins', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif !important;
-          }
-        `;
-        document.head.appendChild(style);
-      });
-    </script>
 </body>
 </html>

@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import { Analytics } from '@vercel/analytics/react';
 // import { DatabaseService } from './services/databaseService';
 import { useSelectedContactWithLastSeen } from './hooks/useSelectedContactWithLastSeen';
 import { useOptimizedContactSelection } from './hooks/useOptimizedContactSelection';
@@ -988,19 +989,40 @@ const App: React.FC = () => {
         if (fullResponse.trim()) {
             try {
                 const finalAiMessage: Message = {
-                    type: 'chat',
                     id: aiMessageId,
                     contactId: userMessage.contactId,
                     text: fullResponse.trim(),
                     senderId: aiContact.id,
                     senderName: aiContact.name,
-                    timestamp: new Date(),
+                    timestamp: new Date().toISOString(),
                     isGroup: !!groupContext,
                 };
                 
                 // Save AI message to database with new schema
                 await MessageService.saveMessage(finalAiMessage);
                 console.log('AI response saved to database:', aiMessageId);
+                
+                // Mark the original user message as read since AI has responded
+                try {
+                    await MessageService.markMessageAsRead(userMessage.id);
+                    console.log('User message marked as read after AI response:', userMessage.id);
+                    
+                    // Send read receipt via MQTT for the user's message
+                    if (user) {
+                        const readReceipt = {
+                            type: 'read_receipt',
+                            messageId: userMessage.id,
+                            readerId: aiContact.id, // AI is acknowledging the read
+                            timestamp: new Date().toISOString()
+                        };
+                        
+                        const topic = groupContext ? `chat/${userMessage.contactId}` : `user/${user.id}/receipts`;
+                        mqttService.publish(topic, readReceipt);
+                        console.log('Read receipt sent via MQTT for user message to AI');
+                    }
+                } catch (error) {
+                    console.error('Error marking user message as read:', error);
+                }
                 
                 // Broadcast to other users via MQTT for group chats
                 if (groupContext && user) {
@@ -1009,12 +1031,17 @@ const App: React.FC = () => {
                     console.log('AI group response broadcasted via MQTT');
                 }
                 
-                // Update the message in state with the final text
+                // Update the message in state with the final text and mark user message as read
                 setMessages(prev => {
                     const currentMessages = prev[userMessage.contactId] || [];
-                    const updatedMessages = currentMessages.map(msg =>
-                        msg.id === aiMessageId ? { ...msg, text: finalAiMessage.text } : msg
-                    );
+                    const updatedMessages = currentMessages.map(msg => {
+                        if (msg.id === aiMessageId) {
+                            return { ...msg, text: finalAiMessage.text };
+                        } else if (msg.id === userMessage.id) {
+                            return { ...msg, status: 'read' as const };
+                        }
+                        return msg;
+                    });
                     return { ...prev, [userMessage.contactId]: updatedMessages };
                 });
                 // Kick off typewriter stream in UI after full text is known
@@ -1062,13 +1089,33 @@ const App: React.FC = () => {
     }
   }, [setMessages, setIsLoading]);
 
-  const handleSendMessage = useCallback(async (text: string, attachment?: Attachment, replyInfo?: { replyTo: Message['replyTo'] }) => {
+  const handleSendMessage = useCallback(async (text: string, attachment?: Attachment, replyInfo?: { replyTo: Message['replyTo'] }, additionalAttachments?: Attachment[]) => {
     if (!selectedContact || isLoading || !user) return;
 
     let attachmentForMessage: Message['attachment'] | undefined;
+    let attachmentsForMessage: Message['attachments'] | undefined;
 
+    // Handle primary attachment (backward compatibility)
     if (attachment?.file) {
-      attachmentForMessage = { type: 'image', url: attachment.url };
+      attachmentForMessage = { 
+        type: attachment.type, 
+        url: attachment.url,
+        fileName: attachment.fileName,
+        fileSize: attachment.fileSize,
+        mimeType: attachment.mimeType
+      };
+    }
+
+    // Handle additional attachments (for multiple files)
+    if (additionalAttachments && additionalAttachments.length > 0) {
+      attachmentsForMessage = additionalAttachments.map(att => ({
+        type: att.type,
+        url: att.url,
+        fileName: att.fileName,
+        fileSize: att.fileSize,
+        mimeType: att.mimeType,
+        file: att.file
+      }));
     }
 
     const userMessage: Message = {
@@ -1081,7 +1128,8 @@ const App: React.FC = () => {
       timestamp: new Date(),
       status: mqttService.isConnected() ? 'sent' : 'queued',
       isGroup: !!selectedContact.isGroup,
-      ...(attachmentForMessage && { attachment: attachmentForMessage }),
+      ...(attachmentForMessage && { attachment: { ...attachmentForMessage, file: attachment?.file } }),
+      ...(attachmentsForMessage && { attachments: attachmentsForMessage }),
       ...(replyInfo && { replyTo: replyInfo.replyTo })
     };
 
@@ -1094,15 +1142,10 @@ const App: React.FC = () => {
       ],
     }));
 
-    // Save message to database (for both AI and non-AI contacts)
-    try {
-      if (attachment?.file) {
-        // If there's a file attachment, use the special method
-        await MessageService.saveMessageWithAttachment(userMessage, attachment.file);
-      } else {
-        // Otherwise use the regular save method
+          // Save message to database (for both AI and non-AI contacts)
+      try {
+        // Always use saveMessage since attachments are already uploaded and in the message object
         await MessageService.saveMessage(userMessage);
-      }
       
       console.log('Message saved to database:', userMessage.id);
       
@@ -1734,6 +1777,8 @@ const App: React.FC = () => {
         <Lightbox src={lightboxImage} onClose={() => setLightboxImage(null)} />
       )}
   
+      {/* Vercel Analytics */}
+      <Analytics />
 
     </div>
   );

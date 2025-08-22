@@ -12,41 +12,36 @@ export interface User {
 }
 
 export interface Attachment {
-  type: 'image';
+  type: 'image' | 'document' | 'audio' | 'video';
   // Note: 'file' is for local handling, 'url' for rendering. File is optional for forwarded messages.
   file?: File;
-  url: string; // base64 data URL
+  url: string; // base64 data URL or blob URL
+  fileName?: string;
+  fileSize?: number;
+  mimeType?: string;
 }
 
-export interface Message {
-  type: 'chat';
-  id: string;
-  contactId: string; // ID of the contact/group this message belongs to
-  text: string;
-  senderId: string;
-  senderName: string;
-  timestamp: Date | string; // Allow string for serialization
-  status?: 'queued' | 'sent' | 'delivered' | 'read'; // For user messages
-  attachment?: {
-    type: 'image';
-    url: string; // base64 data URL
-  };
-  reactions?: {
-    emoji: string;
-    userId: string;
-  }[];
-  isForwarded?: boolean;
-  forwardedFromMessageId?: string;
-  forwardedFromContactId?: string;
-  forwardedById?: string;
-  forwardedToContactId?: string;
-  isGroup?: boolean;
+export type Message = {
+  id: string
+  contactId: string
+  senderId: string
+  senderName: string
+  text: string
+  timestamp: string
+  isGroup: boolean
+  status?: "sending" | "sent" | "delivered" | "read" | "failed"
+  attachment?: Attachment
+  attachments?: Attachment[]
+  reactions?: Reaction[]
+  isAiMessage?: boolean
+  aiSenderId?: string
   replyTo?: {
-    id: string;
-    text: string;
-    senderId: string;
-    senderName: string;
-  };
+    id: string
+    text: string
+    senderId: string
+    senderName: string
+  }
+  isForwarded?: boolean
 }
 
 export interface Contact {

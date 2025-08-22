@@ -35,7 +35,7 @@ export const NavUser: React.FC<NavUserProps> = ({ user, onSettings, onLogout, on
         <div className="flex items-center gap-2 px-2 py-1">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <SidebarMenuButton size="lg" className={`data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground flex-1`}>
+              <SidebarMenuButton size="lg" className={`cursor-pointer data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground flex-1`}>
                 <div className="relative">
                   <Avatar className="h-8 w-8 rounded-lg">
                     <AvatarImage src={user.avatar || '/placeholder.svg'} alt={user.name} />
@@ -79,7 +79,7 @@ export const NavUser: React.FC<NavUserProps> = ({ user, onSettings, onLogout, on
                 </DropdownMenuItem>
               </DropdownMenuGroup>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={onLogout}>
+              <DropdownMenuItem variant='destructive' onClick={onLogout}>
                 <IconLogout />
                 Log out
               </DropdownMenuItem>

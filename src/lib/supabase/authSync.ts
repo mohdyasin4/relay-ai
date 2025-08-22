@@ -24,15 +24,21 @@ export async function syncUserFromSupabase(userId: string) {
   });
   
   if (existingUser) {
-    // Update existing user
+    // Update existing user - preserve existing avatarUrl and lastSeen if not provided
+    const updateData: any = {
+      email: user.email || '',
+      name: user.user_metadata.full_name || user.user_metadata.name || user.email?.split('@')[0] || 'User',
+      updatedAt: new Date()
+    };
+    
+    // Only update avatarUrl if we have a new one from metadata and the user doesn't already have one
+    if (user.user_metadata.avatar_url && !existingUser.avatarUrl) {
+      updateData.avatarUrl = user.user_metadata.avatar_url;
+    }
+    
     return prisma.user.update({
       where: { id: user.id },
-      data: {
-        email: user.email || '',
-        name: user.user_metadata.full_name || user.user_metadata.name || user.email?.split('@')[0] || 'User',
-        avatarUrl: user.user_metadata.avatar_url,
-        updatedAt: new Date()
-      }
+      data: updateData
     });
   } else {
     // Create new user

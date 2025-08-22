@@ -97,6 +97,57 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
     onSelectContact(contactId);
   }, [onSelectContact]);
 
+  // Helper function to get last message preview text
+  const getLastMessagePreview = useCallback((lastMessage: any) => {
+    if (!lastMessage) return 'Start a conversation...';
+    if (lastMessage.isForwarded) return 'Forwarded Message';
+    
+    // Handle attachments - check both attachments array and single attachment
+    let attachmentType: string | null = null;
+    
+    // Check attachments array first
+    if (lastMessage.attachments) {
+      try {
+        const parsedAttachments = typeof lastMessage.attachments === 'string' 
+          ? JSON.parse(lastMessage.attachments) 
+          : lastMessage.attachments;
+        
+        if (Array.isArray(parsedAttachments) && parsedAttachments.length > 0) {
+          const lastAttachment = parsedAttachments[parsedAttachments.length - 1];
+          if (lastAttachment.type === 'image') {
+            attachmentType = '🖼️ Image';
+          } else if (lastAttachment.type === 'video') {
+            attachmentType = '🎥 Video';
+          } else if (lastAttachment.type === 'audio') {
+            attachmentType = '🎵 Audio';
+          } else {
+            attachmentType = '📄 Document';
+          }
+        }
+      } catch (error) {
+        console.error('Error parsing attachments JSON:', error);
+      }
+    }
+    
+    // If no attachment type found, check single attachment
+    if (!attachmentType && lastMessage.attachment && !lastMessage.isForwarded) {
+      if (lastMessage.attachment.type === 'image') {
+        attachmentType = '🖼️ Image';
+      } else if (lastMessage.attachment.type === 'video') {
+        attachmentType = '🎥 Video';
+      } else if (lastMessage.attachment.type === 'audio') {
+        attachmentType = '🎵 Audio';
+      } else {
+        attachmentType = '📄 Document';
+      }
+    }
+    
+    // Return attachment type if found, otherwise return text or default
+    if (attachmentType) return attachmentType;
+    if (lastMessage.text && !lastMessage.isForwarded) return lastMessage.text;
+    return '';
+  }, []);
+
   // Memoize contact groups to prevent unnecessary re-renders
   const contactGroups = useMemo(() => {
     const pinned = filteredContacts.filter(c => !!c.isPinned);
@@ -164,16 +215,8 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
                         }
                       </span>
                     </span>
-                  ) : lastMessage?.isForwarded ? (
-                    'Forwarded Message'
-                  ) : lastMessage?.attachment && !lastMessage.isForwarded ? (
-                    '📷 Image'
-                  ) : !lastMessage?.isForwarded && lastMessage?.text ? (
-                    lastMessage.text
-                  ) : !lastMessage ? (
-                    'Start a conversation...'
                   ) : (
-                    ''
+                    getLastMessagePreview(lastMessage)
                   )}
                 </p>
               </div>
@@ -242,7 +285,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
         <SidebarMenu>
           <SidebarMenuItem>
             <div className="px-2 pt-2">
-              <Button onClick={onNewGroup} className="w-full hidden md:flex text-background" aria-label="Start a new chat">
+              <Button onClick={onNewGroup} variant="default" className="w-full hidden md:flex" aria-label="Start a new chat">
                 <PlusIcon className="w-5 h-5 inline-block mr-1" />
                 New Chat
               </Button>

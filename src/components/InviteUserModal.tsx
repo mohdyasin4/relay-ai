@@ -7,7 +7,7 @@ import { Badge } from './ui/badge';
 import Modal from './Modal';
 import { createClient } from '@/lib/supabase/client';
 import { FriendsService } from '../services/friendsService';
-import GoogleContactsService, { type ProcessedContact } from '../services/googleContactsService';
+// Google Contacts removed to avoid test user management
 import { InvitationService } from '../services/invitationService';
 import type { User } from '../types';
 
@@ -30,8 +30,7 @@ const InviteUserModal: React.FC<InviteUserModalProps> = ({ isOpen, onClose, curr
   const [isSearching, setIsSearching] = useState(false);
   const [isLoadingContacts, setIsLoadingContacts] = useState(false);
   const [sendingRequest, setSendingRequest] = useState<string | null>(null);
-  const [hasGoogleContacts, setHasGoogleContacts] = useState(false);
-  const [needsGoogleReauth, setNeedsGoogleReauth] = useState(false);
+  // Google Contacts functionality removed
 
   // Load all contacts (app users + Google contacts)
   useEffect(() => {
@@ -44,96 +43,40 @@ const InviteUserModal: React.FC<InviteUserModalProps> = ({ isOpen, onClose, curr
   const loadAllContacts = async () => {
     setIsLoadingContacts(true);
     try {
-      console.log('Loading Google contacts...');
-      // Load Google contacts if available
-      const accessToken = await GoogleContactsService.getGoogleAccessToken();
-      let googleContacts: ProcessedContact[] = [];
-      
-      if (accessToken) {
-        console.log('Google access token found, fetching contacts...');
-        try {
-          googleContacts = await GoogleContactsService.getGoogleContacts(accessToken);
-          setHasGoogleContacts(true);
-          console.log(`✓ Loaded ${googleContacts.length} Google contacts`);
-        } catch (error) {
-          console.error('Error loading Google contacts:', error);
-          setHasGoogleContacts(false);
-          
-          // Check if it's a permission error
-          if (error instanceof Error && error.message === 'INSUFFICIENT_PERMISSIONS') {
-            console.log('🔄 Need to re-authenticate for Google Contacts permissions');
-            setNeedsGoogleReauth(true);
-          }
-        }
+      console.log('Loading app users...');
+      const supabase = createClient();
+      const { data: users, error } = await supabase
+        .from('User')
+        .select('id, name, email, avatarUrl')
+        .neq('id', currentUser.id)
+        .limit(50);
+
+      if (!error && users) {
+        console.log(`Found ${users.length} app users`);
+        // Get friend request statuses for all users
+        const appUsers = await Promise.all(
+          users.map(async (user) => {
+            const status = await checkFriendRequestStatus(user.id);
+            return {
+              id: user.id,
+              name: user.name,
+              email: user.email,
+              avatarUrl: user.avatarUrl,
+              source: 'app' as const,
+              friendRequestStatus: status
+            };
+          })
+        );
+        
+        console.log(`✓ Total contacts loaded: ${appUsers.length} app users`);
+        setAllContacts(appUsers);
       } else {
-        console.log('❌ No Google access token available - user may need to re-authenticate');
-        setHasGoogleContacts(false);
-        setNeedsGoogleReauth(true);
-      }
-
-      // Load app users and combine with Google contacts
-      let appUsers: SearchResult[] = [];
-      try {
-        console.log('Loading app users...');
-        const supabase = createClient();
-        const { data: users, error } = await supabase
-          .from('User')
-          .select('id, name, email, avatarUrl')
-          .neq('id', currentUser.id)
-          .limit(50);
-
-        if (!error && users) {
-          console.log(`Found ${users.length} app users`);
-          // Get friend request statuses for all users
-          appUsers = await Promise.all(
-            users.map(async (user) => {
-              const status = await checkFriendRequestStatus(user.id);
-              return {
-                id: user.id,
-                name: user.name,
-                email: user.email,
-                avatarUrl: user.avatarUrl,
-                source: 'app' as const,
-                friendRequestStatus: status
-              };
-            })
-          );
-        }
-      } catch (error) {
         console.error('Error loading app users:', error);
+        setAllContacts([]);
       }
-
-      // Convert Google contacts to SearchResult format (for inviting to app)
-      const googleContactsAsSearchResults: SearchResult[] = googleContacts.map(contact => ({
-        id: contact.id || `google-${contact.email}`,
-        name: contact.name,
-        email: contact.email,
-        avatarUrl: contact.avatarUrl,
-        source: 'google' as const,
-        friendRequestStatus: 'none' as const
-      }));
-
-      console.log('📋 Google contacts as search results:', googleContactsAsSearchResults);
-
-      // Combine app users and Google contacts, avoiding duplicates by email
-      const combined = [...appUsers];
-      let duplicatesFound = 0;
-      googleContactsAsSearchResults.forEach(googleContact => {
-        // Only add Google contact if no app user with same email exists
-        // If Google contact has no email, always add it (can't be a duplicate)
-        if (!googleContact.email || !appUsers.some(appUser => appUser.email === googleContact.email)) {
-          combined.push(googleContact);
-        } else {
-          duplicatesFound++;
-          console.log(`📧 Duplicate email found: ${googleContact.email} (skipping Google contact)`);
-        }
-      });
-
-      console.log(`✓ Total contacts loaded: ${combined.length} (${appUsers.length} app users + ${googleContactsAsSearchResults.length - duplicatesFound} Google contacts, ${duplicatesFound} duplicates removed)`);
-      console.log('📊 Final combined contacts:', combined);
-      setAllContacts(combined);
     } catch (error) {
       console.error('Error loading contacts:', error);
+      setAllContacts([]);
     } finally {
       setIsLoadingContacts(false);
     }
@@ -249,22 +192,7 @@ const InviteUserModal: React.FC<InviteUserModalProps> = ({ isOpen, onClose, curr
     }
   };
 
-  const handleGoogleReauth = async () => {
-    try {
-      console.log('🔄 User clicked re-auth button');
-      const supabase = createClient();
-      
-      // Sign out first to clear the session
-      await supabase.auth.signOut();
-      
-      // Wait a moment then start new OAuth flow
-      setTimeout(async () => {
-        await GoogleContactsService.forceReauth();
-      }, 1000);
-    } catch (error) {
-      console.error('Error during Google re-authentication:', error);
-    }
-  };
+  // Google reauth functionality removed
 
   const sendFriendRequest = async (targetUserId: string) => {
     setSendingRequest(targetUserId);
@@ -593,7 +521,7 @@ const InviteUserModal: React.FC<InviteUserModalProps> = ({ isOpen, onClose, curr
               ) : (
                 <>
                   <p className="text-sm text-muted-foreground mb-2">
-                    {allContacts.length} contacts available{hasGoogleContacts && ' (including Google contacts)'}
+                    {allContacts.length} contacts available
                   </p>
                   {allContacts.map((contact, index) => (
                     <UserCard
@@ -606,48 +534,14 @@ const InviteUserModal: React.FC<InviteUserModalProps> = ({ isOpen, onClose, curr
                   ))}
                 </>
               )}
-              {needsGoogleReauth && !isLoadingContacts && (
-                <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                  <div className="flex items-start space-x-3">
-                    <div className="flex-1">
-                      <p className="text-sm font-medium text-blue-900">Connect Google Contacts</p>
-                      <p className="text-sm text-blue-700 mt-1">
-                        To see your Google contacts, please re-authenticate with Google to grant contacts access.
-                      </p>
-                    </div>
-                    <Button 
-                      size="sm" 
-                      onClick={handleGoogleReauth}
-                      className="bg-blue-600 hover:bg-blue-700"
-                    >
-                      Connect
-                    </Button>
-                  </div>
-                </div>
-              )}
+              {/* Google Contacts functionality removed */}
             </>
           ) : (
             <div className="text-center py-8 text-muted-foreground">
               <Users className="w-12 h-12 mx-auto mb-2 opacity-20" />
               <p className="font-medium">Start searching</p>
               <p className="text-sm">Type a name or email to find users</p>
-              {needsGoogleReauth && (
-                <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                  <div className="flex flex-col items-center space-y-2">
-                    <p className="text-sm font-medium text-blue-900">Connect Google Contacts</p>
-                    <p className="text-sm text-blue-700 text-center">
-                      Connect your Google account to see and invite your contacts.
-                    </p>
-                    <Button 
-                      size="sm" 
-                      onClick={handleGoogleReauth}
-                      className="bg-blue-600 hover:bg-blue-700"
-                    >
-                      Connect Google Contacts
-                    </Button>
-                  </div>
-                </div>
-              )}
+              {/* Google Contacts functionality removed */}
             </div>
           )
         )}

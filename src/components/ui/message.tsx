@@ -8,7 +8,6 @@ import {
 import { cn } from "@/lib/utils"
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
 import { Markdown } from "./markdown"
-import { Badge } from "@/components/ui/badge"
 import { getSenderToneClasses } from "@/utils/colorUtils"
 
 export type MessageProps = {
@@ -54,10 +53,10 @@ export type MessageContentProps = {
   theme?: string
   copied?: boolean
   handleCopy?: (text: string) => void
-
   className?: string
+  before?: React.ReactNode
   resolveMentionContact?: (idOrName: string) => { name: string; avatarUrl?: string } | undefined
-} & React.ComponentProps<typeof Markdown> &
+} & Omit<React.ComponentProps<typeof Markdown>, "children"> &
   React.HTMLProps<HTMLDivElement>
 
 const MessageContent = ({
@@ -67,16 +66,13 @@ const MessageContent = ({
   copied, 
   handleCopy,
   className,
+  before,
   ...props
 }: MessageContentProps) => {
   const classNames = cn(
     "rounded-lg text-foreground prose prose-headings:text-foreground prose-p:text-foreground prose-strong:text-foreground prose-em:text-foreground prose-code:text-foreground prose-pre:text-foreground prose-blockquote:text-foreground prose-li:text-foreground prose-a:text-foreground whitespace-",
     className
   )
-
-  // Mention coloring and hover-card rendering for links of the form [@Name](mention:ID)
-  // Deprecated hashColorIndex retained for reference only
-  // Deprecated palette replaced by shared color util to ensure parity
 
   const mentionComponents: React.ComponentProps<typeof Markdown>["components"] = {
     a: (anchorProps) => {
@@ -87,12 +83,11 @@ const MessageContent = ({
         const { text: toneText, bg: toneBg } = getSenderToneClasses(id)
         const info = (props as any).resolveMentionContact?.(id)
         const tag = (
-          <Badge 
-            variant="secondary" 
-            className={cn("inline-flex items-center gap-1 px-2.5 py-[3px] text-[11px] font-semibold rounded-full shadow-sm hover:shadow transition-shadow duration-150 ring-1 ring-border/40", toneText, toneBg)}
+          <span 
+            className={cn("font-semibold text-primary bg-primary/10 px-1.5 py-0.5 rounded-md", toneText, toneBg)}
           >
             @{children}
-          </Badge>
+          </span>
         )
         if (!info) return tag
         return (
@@ -119,15 +114,22 @@ const MessageContent = ({
     },
   }
 
-  // Filter out props that shouldn't be passed to DOM elements
   const { setCopied, resolveMentionContact, ...domProps } = props;
 
-  return markdown ? (
-    <Markdown className={classNames} theme={theme} copied={copied} handleCopy={handleCopy} components={{ ...props.components, ...mentionComponents }} {...domProps}>
-      {children as string}
-    </Markdown>
-  ) : (
+  if (markdown) {
+    return (
+      <div className={classNames} {...domProps}>
+        {before}
+        <Markdown theme={theme} copied={copied} handleCopy={handleCopy} components={{ ...props.components, ...mentionComponents }}>
+          {typeof children === 'string' ? children : String(children)}
+        </Markdown>
+      </div>
+    )
+  }
+
+  return (
     <div className={classNames} {...domProps}>
+      {before}
       {children}
     </div>
   )
