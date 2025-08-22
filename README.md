@@ -87,7 +87,7 @@
 <div align="center">
 
 ### 🏠 **Modern Dashboard**
-![Dashboard](https://via.placeholder.com/800x500/f8fafc/64748b?text=Dashboard+Screenshot)
+![Relay AI Dashboard](./public/images/og.png)
 *Clean, intuitive interface with organized chat list and AI assistant integration*
 
 ### 💬 **AI-Powered Conversations**

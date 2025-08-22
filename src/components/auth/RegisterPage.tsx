@@ -103,14 +103,14 @@ export default function SignUp() {
             className="flex items-center gap-3 font-semibold text-xl group transition-all duration-300 hover:scale-105"
           >
             <motion.div
-              className="bg-primary text-primary-foreground flex size-8 items-center justify-center rounded-md shadow-lg"
+              className="bg-primary text-white flex size-8 items-center justify-center rounded-md shadow-lg"
               whileHover={{ rotate: 5, scale: 1.1 }}
               whileTap={{ scale: 0.95 }}
               transition={{ type: "spring", stiffness: 400, damping: 17 }}
             >
               <MessagesSquare className="size-5" />
             </motion.div>
-            <span className="text-primary-foreground font-bold tracking-tight">
+            <span className="text-foreground font-bold tracking-tight">
               Relay
             </span>
           </a>

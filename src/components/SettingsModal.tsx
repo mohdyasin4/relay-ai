@@ -233,8 +233,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
 
     try {
       if (hasAvatarChange) {
-        if (file) {
-          newAvatarUrl = await uploadAttachment({ userId: user.id, file });
+      if (file) {
+        newAvatarUrl = await uploadAttachment({ userId: user.id, file });
         } else if (!avatarPreview) {
           // Only set to undefined if user explicitly removed avatar
           newAvatarUrl = undefined;
@@ -310,7 +310,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
             <div className="flex-1 overflow-hidden">
               <ScrollArea className="h-full">
                 <TabsContent value="profile" className="mt-0 space-y-6">
-                  {/* Profile Section */}
+          {/* Profile Section */}
                   <motion.div
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
@@ -360,9 +360,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                         </div>
                         
                         <input
-                          type="file"
-                          ref={avatarFileRef}
-                          accept="image/*"
+                    type="file"
+                    ref={avatarFileRef}
+                    accept="image/*"
                           onChange={handleAvatarChange}
                           className="hidden"
                         />
@@ -370,24 +370,24 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                         <p className="text-xs text-muted-foreground">
                           Recommended: Square image, at least 400x400px • JPG, PNG up to 2MB
                         </p>
-                      </div>
+              </div>
 
                       {/* Name Section */}
                       <div className="space-y-4 max-w-md mx-auto">
                         <Label htmlFor="profileName" className="text-lg font-semibold text-left">Display Name</Label>
-                        <Input
-                          id="profileName"
-                          value={name}
-                          onChange={(e) => setName(e.target.value)}
-                          placeholder="Enter your display name"
+                <Input
+                  id="profileName"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Enter your display name"
                           className="text-center text-lg font-medium h-12 rounded-xl border-2 focus:border-primary/50 transition-colors"
-                        />
+                />
                         <div className="flex items-center gap-2 text-sm text-muted-foreground">
                           <CheckCircle2 className="h-4 w-4 text-green-500" />
                           This is how others will see you in conversations
                         </div>
-                      </div>
-                    </div>
+              </div>
+            </div>
                   </motion.div>
                 </TabsContent>
 
@@ -403,8 +403,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                         <h3 className="text-2xl font-bold">Choose Your Theme</h3>
                         <p className="text-muted-foreground">Select the appearance that works best for you</p>
                       </div>
-                      <ThemeSelector />
-                    </div>
+              <ThemeSelector />
+            </div>
                   </motion.div>
                 </TabsContent>
 
@@ -426,8 +426,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                         <p className="text-muted-foreground max-w-2xl mx-auto">
                           Connect with AI assistants to enhance your conversations. Currently available by invitation only.
                         </p>
-                      </div>
-                      
+          </div>
+
                       {/* Access Restricted Section */}
                       <div className="relative">
                         <div className="bg-gradient-to-br from-primary/5 to-primary/10 rounded-2xl border-2 border-dashed border-primary/30 p-12 text-center">
@@ -492,7 +492,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                           </div>
                           
                           <div className="flex items-center justify-between p-4 rounded-xl bg-muted/30">
-                            <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-3">
                               <CheckCircle2 className="h-5 w-5 text-primary" />
                               <div>
                                 <div className="font-medium">Read Receipts</div>
@@ -525,11 +525,11 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                           </Button>
                         </div>
                       </div>
-                    </div>
+              </div>
                   </motion.div>
                 </TabsContent>
-              </ScrollArea>
-            </div>
+            </ScrollArea>
+          </div>
           </Tabs>
         </div>
 
@@ -542,7 +542,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
             <div className="flex gap-3">
               <Button variant="outline" onClick={onClose} disabled={isUploading} className="rounded-xl">
                 Close
-              </Button>
+          </Button>
               <Button 
                 onClick={handleSave} 
                 disabled={isUploading || !name.trim()} 
@@ -550,7 +550,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
               >
                 {isUploading && <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />}
                 {isUploading ? 'Saving...' : 'Save Changes'}
-              </Button>
+          </Button>
             </div>
           </div>
         </DialogFooter>
