@@ -77,16 +77,37 @@ export class DatabaseService {
     // In a browser environment, use Supabase API
     if (typeof window !== 'undefined') {
       const supabase = createClient();
+      
+      // First check if user exists to preserve existing fields
+      const { data: existingUser } = await supabase
+        .from('User')
+        .select('avatarUrl, lastSeen')
+        .eq('id', userData.id)
+        .maybeSingle();
+      
+      const upsertData: any = {
+        id: userData.id,
+        name: userData.name,
+        email: userData.email || '',
+        status: 'online',
+        updatedAt: new Date().toISOString()
+      };
+      
+      // Only update avatarUrl if provided, otherwise preserve existing
+      if (userData.avatarUrl !== undefined) {
+        upsertData.avatarUrl = userData.avatarUrl;
+      } else if (existingUser?.avatarUrl) {
+        upsertData.avatarUrl = existingUser.avatarUrl;
+      }
+      
+      // Preserve existing lastSeen (don't overwrite it during login)
+      if (existingUser?.lastSeen) {
+        upsertData.lastSeen = existingUser.lastSeen;
+      }
+      
       const { data, error } = await supabase
         .from('User')
-        .upsert({
-          id: userData.id,
-          name: userData.name,
-          email: userData.email || '',
-          avatarUrl: userData.avatarUrl || null,
-          status: 'online',
-          updatedAt: new Date().toISOString()
-        })
+        .upsert(upsertData)
         .select()
         .maybeSingle();
       
@@ -107,17 +128,34 @@ export class DatabaseService {
     
     // In a Node.js environment, use Prisma directly
     try {
+      // Check if user exists to preserve existing fields
+      const existingUser = await prisma.user.findUnique({
+        where: { id: userData.id },
+        select: { avatarUrl: true, lastSeen: true }
+      });
+      
+      const updateData: any = {
+        name: userData.name,
+        status: 'online',
+        updatedAt: new Date()
+      };
+      
+      // Only update avatarUrl if provided, otherwise preserve existing
+      if (userData.avatarUrl !== undefined) {
+        updateData.avatarUrl = userData.avatarUrl;
+      }
+      
+      // Preserve existing lastSeen during login
+      // (lastSeen should only be updated when user goes offline)
+      
       const user: any = await prisma.user.upsert({
         where: { id: userData.id },
-        update: {
-          name: userData.name,
-          status: 'online',
-          updatedAt: new Date()
-        },
+        update: updateData,
         create: {
           id: userData.id,
           email: userData.email || '',
           name: userData.name,
+          avatarUrl: userData.avatarUrl || null,
           status: 'online'
         }
       });
@@ -156,6 +194,8 @@ export class DatabaseService {
           User:contactUserId (
             id,
             name,
+            email,
+            avatarUrl,
             status,
             lastSeen
           )
@@ -173,6 +213,8 @@ export class DatabaseService {
         return {
           id: contact.contactUserId,
           name: userObj?.name || '',
+          email: userObj?.email || '',
+          avatarUrl: userObj?.avatarUrl || '',
           status: userObj?.status || 'offline',
           lastSeen: userObj?.lastSeen || null,
           isPinned: contact.isPinned,

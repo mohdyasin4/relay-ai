@@ -23,27 +23,12 @@ function Avatar({
 
 function AvatarImage({
   className,
-  onError,
-  loading = "lazy",
   ...props
 }: React.ComponentProps<typeof AvatarPrimitive.Image>) {
-  const handleError: React.ComponentProps<typeof AvatarPrimitive.Image>["onError"] = (e) => {
-    try {
-      const img = e.currentTarget as HTMLImageElement & { _failed?: boolean }
-      // prevent infinite loop
-      if (!img._failed) {
-        img._failed = true
-        img.src = "/placeholder.svg"
-      }
-    } catch {}
-    onError?.(e)
-  }
   return (
     <AvatarPrimitive.Image
       data-slot="avatar-image"
       className={cn("aspect-square size-full", className)}
-      loading={loading}
-      onError={handleError}
       {...props}
     />
   )

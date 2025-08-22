@@ -69,7 +69,7 @@ export function LoginForm({
       
       if (data?.user) {
         console.log('Login successful, redirecting to /app');
-        window.location.href = '/app'; // Use direct browser navigation instead of React Router
+        window.location.replace('/app');
       }
     } catch (err: any) {
       setError(err.message || 'An error occurred during sign in')
@@ -96,14 +96,14 @@ export function LoginForm({
       await supabase.auth.signOut()
       
       // Clear any potential stale flow state
-      localStorage.removeItem('gemini-messenger-auth')
-      localStorage.removeItem('supabase.auth.token')
+      try { localStorage.removeItem('gemini-messenger-auth') } catch {}
+      try { localStorage.removeItem('supabase.auth.token') } catch {}
       
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
           redirectTo: redirectUri,
-          scopes: "profile email openid https://www.googleapis.com/auth/contacts.readonly https://www.googleapis.com/auth/contacts.other.readonly",
+          scopes: "profile email openid", // Removed contacts scopes
           queryParams: {
             access_type: 'offline',
             prompt: 'consent',
@@ -170,7 +170,7 @@ export function LoginForm({
             Email Address
           </Label>
           <div className="relative group">
-            <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4 group-focus-within:text-[#3B37FE] transition-colors z-10 pointer-events-none" />
+            <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4 group-focus-within:text-primary transition-colors z-10 pointer-events-none" />
             <Input 
               id="email" 
               type="email" 
@@ -187,7 +187,7 @@ export function LoginForm({
               }}
               disabled={isLoading}
               className={cn(
-                "pl-10 h-12 rounded-lg focus:border-[#3B37FE] focus:ring-[#3B37FE] transition-all duration-200 bg-background/50 backdrop-blur-sm",
+                "pl-10 h-12 rounded-lg focus:border-primary focus:ring-primary transition-all duration-200 bg-background/50 backdrop-blur-sm",
                 validationErrors.email && "border-destructive focus:border-destructive focus:ring-destructive"
               )}
             />
@@ -207,17 +207,9 @@ export function LoginForm({
             <Label htmlFor="password" className="text-foreground font-semibold text-sm">
               Password
             </Label>
-            <motion.a
-              href="/forgot-password"
-              className="text-sm text-[#3B37FE] hover:text-[#2B27EE] font-medium transition-colors duration-200"
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-            >
-              Forgot password?
-            </motion.a>
           </div>
           <div className="relative group">
-            <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4 group-focus-within:text-[#3B37FE] transition-colors z-10 pointer-events-none" />
+            <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4 group-focus-within:text-primary transition-colors z-10 pointer-events-none" />
             <Input 
               id="password" 
               name="password"
@@ -234,7 +226,7 @@ export function LoginForm({
               }}
               disabled={isLoading}
               className={cn(
-                "pl-10 pr-10 h-12 rounded-lg focus:border-[#3B37FE] focus:ring-[#3B37FE] transition-all duration-200 bg-background/50 backdrop-blur-sm",
+                "pl-10 pr-10 h-12 rounded-lg focus:border-primary focus:ring-primary transition-all duration-200 bg-background/50 backdrop-blur-sm",
                 validationErrors.password && "border-destructive focus:border-destructive focus:ring-destructive"
               )}
             />
@@ -247,11 +239,20 @@ export function LoginForm({
               {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
           </div>
+          {/* Forgot Password Link */}
+          <div className="flex justify-end">
+            <a
+              href="/forgot-password"
+              className="text-sm text-muted-foreground hover:text-primary transition-colors duration-200"
+            >
+              Forgot password?
+            </a>
+          </div>
           {validationErrors.password && (
             <p className="text-sm text-destructive mt-1">{validationErrors.password}</p>
           )}
         </motion.div>
-        
+      
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
@@ -262,7 +263,7 @@ export function LoginForm({
             type="submit" 
             color="primary"
             disabled={isLoading}
-            className="w-full h-12 bg-[#3B37FE] hover:bg-[#2B27EE] text-white font-semibold text-base transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full h-12 bg-primary hover:bg-primary/90 text-primary-foreground font-semibold text-base transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <motion.span
               whileHover={{ scale: isLoading ? 1 : 1.02 }}
@@ -274,7 +275,6 @@ export function LoginForm({
             </motion.span>
           </TextureButton>
         </motion.div>
-        
         <motion.div 
           className="relative text-center text-sm"
           initial={{ opacity: 0 }}
@@ -324,7 +324,7 @@ export function LoginForm({
         <span className="text-muted-foreground">Don't have an account? </span>
         <motion.a 
           href="/register" 
-          className="text-[#3B37FE] hover:text-[#2B27EE] font-semibold transition-colors duration-200"
+          className="text-primary hover:text-primary/90 font-semibold transition-colors duration-200"
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.98 }}
         >

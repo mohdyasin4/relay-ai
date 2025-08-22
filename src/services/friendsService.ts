@@ -17,6 +17,30 @@ export interface FriendRequest {
  * Service for handling friend requests and contacts
  */
 export class FriendsService {
+  // Simple in-memory cache for contacts by user with TTL
+  private static contactsCache: Map<string, { ts: number; data: Contact[] }> = new Map();
+  private static CONTACTS_TTL_MS = 15_000;
+
+  /**
+   * Get count of pending friend requests for a user
+   */
+  static async getPendingFriendRequestsCount(userId: string): Promise<number> {
+    const supabase = createClient();
+    
+    const { count, error } = await supabase
+      .from('FriendRequest')
+      .select('*', { count: 'exact', head: true })
+      .eq('receiverId', userId)
+      .eq('status', 'pending');
+
+    if (error) {
+      console.error('Error getting pending friend requests count:', error);
+      return 0;
+    }
+
+    return count || 0;
+  }
+
   /**
    * Get all friend requests for a user (both sent and received)
    */
@@ -164,6 +188,11 @@ export class FriendsService {
     const supabase = createClient();
     
     try {
+      // Serve from cache if fresh
+      const cached = this.contactsCache.get(userId);
+      if (cached && Date.now() - cached.ts < this.CONTACTS_TTL_MS) {
+        return cached.data;
+      }
       // Check current auth state
       const { data: { session } } = await supabase.auth.getSession();
       console.log('Current session:', session?.user?.id);
@@ -259,6 +288,8 @@ export class FriendsService {
       contacts.push(...groupContacts);
 
       console.log('Final contacts array (including groups):', contacts);
+      // Store in cache
+      this.contactsCache.set(userId, { ts: Date.now(), data: contacts });
       return contacts;
     } catch (error) {
       console.error('Error fetching contacts:', error);

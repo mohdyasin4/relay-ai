@@ -11,27 +11,47 @@ export interface DatabaseMessage {
   groupId?: string;
   status: 'sent' | 'delivered' | 'read';
   timestamp: string;
-  attachmenturl?: string;
+  attachments?: any; // JSON field for multiple attachments
   reactions?: string[]; // Array of emoji strings
 }
 
 export class MessageService {
-  // Simple in-memory caches to reduce duplicate network calls
-  private static messagesCache: Map<string, { data: Message[]; ts: number }> = new Map();
+  // Optimized in-memory caches with LRU eviction and better TTLs
+  private static messagesCache: Map<string, { data: Message[]; ts: number; hits: number }> = new Map();
   private static messagesInflight: Map<string, Promise<Message[]>> = new Map();
-  private static latestPerContactsCache: Map<string, { data: Record<string, Message[]>; ts: number }> = new Map();
+  private static latestPerContactsCache: Map<string, { data: Record<string, Message[]>; ts: number; hits: number }> = new Map();
   private static latestPerContactsInflight: Map<string, Promise<Record<string, Message[]>>> = new Map();
-  private static unreadCache: Map<string, { data: Record<string, Message[]>; ts: number }> = new Map();
+  private static unreadCache: Map<string, { data: Record<string, Message[]>; ts: number; hits: number }> = new Map();
   private static unreadInflight: Map<string, Promise<Record<string, Message[]>>> = new Map();
+
+  private static readonly MAX_CACHE_SIZE = 50; // Limit cache size to prevent memory issues
+  private static readonly DEFAULT_TTL = 30_000; // 30 seconds default TTL
+  private static readonly MESSAGES_TTL = 60_000; // 1 minute for messages
+  private static readonly LATEST_TTL = 45_000; // 45 seconds for latest messages
 
   private static isFresh(ts: number, ttlMs: number): boolean {
     return Date.now() - ts < ttlMs;
+  }
+
+  private static evictOldEntries<T extends { ts: number; hits: number }>(cache: Map<string, T>): void {
+    if (cache.size <= this.MAX_CACHE_SIZE) return;
+    
+    // Convert to array and sort by last access time and hit count
+    const entries = Array.from(cache.entries())
+      .sort((a, b) => (a[1].ts - b[1].ts) || (a[1].hits - b[1].hits))
+      .slice(0, cache.size - this.MAX_CACHE_SIZE + 10); // Remove extra entries
+    
+    entries.forEach(([key]) => cache.delete(key));
   }
 
   static clearCaches(): void {
     this.messagesCache.clear();
     this.latestPerContactsCache.clear();
     this.unreadCache.clear();
+    // Clear inflight requests too
+    this.messagesInflight.clear();
+    this.latestPerContactsInflight.clear();
+    this.unreadInflight.clear();
   }
   /**
    * Save a message to the database
@@ -100,7 +120,7 @@ export class MessageService {
             : (message.timestamp instanceof Date 
                 ? message.timestamp.toISOString() 
                 : new Date().toISOString()),
-          attachmenturl: message.attachment?.url || null,
+          attachments: message.attachments ? JSON.stringify(message.attachments) : undefined,
           isAiMessage: isAiSender,
           // Add reply fields if message has a replyTo property
           replyToId: message.replyTo?.id || null,
@@ -137,9 +157,175 @@ export class MessageService {
   }
 
   /**
- * Get messages for a chat (either direct or group)
- */
-  static async getMessages(contactId: string, isGroup: boolean = false, limit: number = 50): Promise<Message[]> {
+   * Get messages before a specific date (for pagination)
+   */
+  static async getMessagesBeforeDate(contactId: string, isGroup: boolean = false, beforeDate: Date | string, limit: number = 100): Promise<Message[]> {
+    const cacheKey = `before-${contactId}-${isGroup}-${beforeDate}-${limit}`;
+    const cached = this.messagesCache.get(cacheKey);
+    if (cached && this.isFresh(cached.ts, this.MESSAGES_TTL)) {
+      cached.hits++;
+      return cached.data;
+    }
+
+    // Check if there's already an inflight request for this key
+    if (this.messagesInflight.has(cacheKey)) {
+      return this.messagesInflight.get(cacheKey)!;
+    }
+
+    const loadPromise = this._getMessagesBeforeDate(contactId, isGroup, beforeDate, limit);
+    this.messagesInflight.set(cacheKey, loadPromise);
+
+    try {
+      const messages = await loadPromise;
+      
+      // Cache the result
+      this.evictOldEntries(this.messagesCache);
+      this.messagesCache.set(cacheKey, { data: messages, ts: Date.now(), hits: 1 });
+      
+      return messages;
+    } finally {
+      this.messagesInflight.delete(cacheKey);
+    }
+  }
+
+  private static transformDatabaseMessage(msg: any): Message {
+    // Detect AI messages for backward compatibility with old messages
+    const senderName = msg.senderName || (msg.User as any)?.name || 'Unknown';
+    const isAiMessage = msg.isAiMessage || 
+                       msg.aiSenderId || 
+                       senderName === 'Code Assistant' || 
+                       senderName === 'AI Assistant' ||
+                       senderName.includes('Assistant');
+    
+    // Determine the correct sender ID
+    let senderId = msg.senderId;
+    if (isAiMessage && msg.aiSenderId) {
+      senderId = msg.aiSenderId;
+    } else if (isAiMessage && !msg.aiSenderId) {
+      // For old AI messages without aiSenderId, use a fallback
+      senderId = 'code-assistant'; // Default AI persona ID
+    }
+
+    return {
+      type: 'chat' as const,
+      id: msg.id,
+      contactId: msg.groupId || msg.recipientId || '',
+      text: msg.text,
+      senderId: senderId,
+      senderName: senderName,
+      timestamp: msg.timestamp,
+      status: msg.status as 'sent' | 'delivered' | 'read',
+      isGroup: !!msg.groupId,
+      isForwarded: !!msg.isForwarded,
+      forwardedFromMessageId: msg.forwardedFromMessageId || undefined,
+      forwardedFromContactId: msg.forwardedFromContactId || undefined,
+      forwardedById: msg.forwardedById || undefined,
+      forwardedToContactId: msg.forwardedToContactId || undefined,
+      reactions: msg.reactions || [],
+      // Parse attachments JSON string and handle multiple attachments
+      ...(msg.attachments && (() => {
+        try {
+          const parsedAttachments = typeof msg.attachments === 'string' 
+            ? JSON.parse(msg.attachments) 
+            : msg.attachments;
+          
+          if (Array.isArray(parsedAttachments) && parsedAttachments.length > 0) {
+            return {
+              attachments: parsedAttachments.map(att => ({
+                type: att.type || 'image',
+                url: att.url,
+                fileName: att.fileName,
+                fileSize: att.fileSize,
+                mimeType: att.mimeType
+              })),
+              // Handle legacy single attachment (for backward compatibility)
+              ...(parsedAttachments.length === 1 && {
+                attachment: {
+                  type: parsedAttachments[0].type || 'image',
+                  url: parsedAttachments[0].url,
+                  fileName: parsedAttachments[0].fileName,
+                  fileSize: parsedAttachments[0].fileSize,
+                  mimeType: parsedAttachments[0].mimeType
+                }
+              })
+            };
+          }
+        } catch (error) {
+          console.error('Error parsing attachments JSON:', error);
+        }
+        return {};
+      })()),
+      ...(msg.replyToId && {
+        replyTo: {
+          id: msg.replyToId,
+          text: msg.replyToText || '',
+          senderId: msg.replyToSenderId || '',
+          senderName: msg.replyToSenderName || 'Unknown'
+        }
+      })
+    };
+  }
+
+  private static async _getMessagesBeforeDate(contactId: string, isGroup: boolean, beforeDate: Date | string, limit: number): Promise<Message[]> {
+    const supabase = createClient();
+    const { data: authData } = await supabase.auth.getUser();
+    
+    if (!authData?.user) return [];
+
+    const beforeTimestamp = typeof beforeDate === 'string' ? beforeDate : beforeDate.toISOString();
+
+    try {
+      let query = supabase
+        .from('Message')
+        .select(`
+          id,
+          text,
+          senderId,
+          aiSenderId,
+          senderName,
+          recipientId,
+          groupId,
+          status,
+          timestamp,
+          attachments,
+          isAiMessage,
+          replyToId,
+          replyToText,
+          replyToSenderId,
+          replyToSenderName,
+          isForwarded,
+          forwardedFromMessageId,
+          forwardedFromContactId,
+          forwardedById,
+          forwardedToContactId,
+          reactions:Reaction(id, userId, emoji),
+          User!senderId(id, name, avatarUrl)
+        `)
+        .lt('timestamp', beforeTimestamp)
+        .order('timestamp', { ascending: false })
+        .limit(limit);
+
+      if (isGroup) {
+        query = query.eq('groupId', contactId);
+      } else {
+        query = query.or(`and(senderId.eq.${authData.user.id},recipientId.eq.${contactId}),and(senderId.eq.${contactId},recipientId.eq.${authData.user.id})`);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      const messages = (data || []).map(this.transformDatabaseMessage).reverse(); // Reverse to get chronological order
+      return messages;
+    } catch (error) {
+      console.error('Error fetching messages before date:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get messages between two users or in a group
+   */
+  static async getMessages(contactId: string, isGroup: boolean = false, limit: number = 100): Promise<Message[]> {
     const supabase = createClient();
   
   try {
@@ -155,9 +341,10 @@ export class MessageService {
       }
       const cacheKey = `${isGroup ? 'group' : 'dm'}:${currentUserId || 'na'}:${contactId}:${limit}`;
 
-      // Use cached value if fresh (TTL 15s)
+      // Use cached value if fresh with optimized TTL
       const cached = this.messagesCache.get(cacheKey);
-      if (cached && this.isFresh(cached.ts, 15_000)) {
+      if (cached && this.isFresh(cached.ts, this.MESSAGES_TTL)) {
+        cached.hits += 1; // Track cache hits for better eviction
         return cached.data;
       }
       const inflight = this.messagesInflight.get(cacheKey);
@@ -175,7 +362,7 @@ export class MessageService {
         groupId,
         status,
         timestamp,
-        attachmenturl,
+        attachments,
         isAiMessage,
         isForwarded,
         forwardedFromMessageId,
@@ -186,9 +373,11 @@ export class MessageService {
         replyToText,
         replyToSenderId,
         replyToSenderName,
-        sender:User!senderId(name)
+        sender:User!senderId(name, avatarUrl)
       `)
-      .order('timestamp', { ascending: true });
+      // Fetch newest first for fast initial view, we'll sort ascending after mapping
+      .order('timestamp', { ascending: false })
+      .limit(limit);
 
     if (isGroup) {
       // For group messages, filter by groupId
@@ -204,8 +393,8 @@ export class MessageService {
         .or(`and(senderId.eq.${currentUserId},recipientId.eq.${contactId}),and(senderId.eq.${contactId},recipientId.eq.${currentUserId}),and(aiSenderId.eq.${contactId},recipientId.eq.${currentUserId}),and(senderId.eq.${currentUserId},aiSenderId.eq.${contactId})`);
     }
 
-    // Remove .limit(limit) to ensure full history is fetched when opening a chat
-
+    // We intentionally limit above for faster initial loads; older messages are fetched on scroll
+    
     const pending = (async (): Promise<Message[]> => {
       try {
         const { data: messages, error } = await query;
@@ -214,8 +403,9 @@ export class MessageService {
           return [] as Message[];
         }
         if (!messages || messages.length === 0) {
-          this.messagesCache.set(cacheKey, { data: [], ts: Date.now() });
-          return [] as Message[];
+        this.evictOldEntries(this.messagesCache);
+        this.messagesCache.set(cacheKey, { data: [], ts: Date.now(), hits: 1 });
+        return [] as Message[];
         }
 
         // Fetch reactions for all messages
@@ -237,10 +427,23 @@ export class MessageService {
           }
         }
 
+        // Compute correct thread contact id for DMs (the other participant), or group id for groups
+        const resolveThreadContactId = (msg: any): string => {
+          if (msg.groupId) return msg.groupId;
+          if (currentUserId) {
+            if (msg.recipientId === currentUserId) return msg.senderId || msg.aiSenderId || '';
+            if (msg.senderId === currentUserId) return msg.recipientId || msg.aiSenderId || '';
+          }
+          // Fallbacks (should rarely hit)
+          return (msg.senderId && msg.senderId !== currentUserId)
+            ? msg.senderId
+            : (msg.recipientId && msg.recipientId !== currentUserId ? msg.recipientId : (msg.aiSenderId || ''));
+        };
+
         const mapped: Message[] = messages.map((msg: any) => ({
           type: 'chat' as const,
           id: msg.id,
-          contactId: msg.groupId || msg.recipientId || '',
+          contactId: resolveThreadContactId(msg),
           text: msg.text,
           senderId: msg.isAiMessage ? msg.aiSenderId : msg.senderId,
           senderName: msg.senderName || (msg.sender as any)?.name || 'Unknown',
@@ -253,12 +456,39 @@ export class MessageService {
           forwardedById: (msg as any).forwardedById || undefined,
           forwardedToContactId: (msg as any).forwardedToContactId || undefined,
           reactions: reactionsByMessageId[msg.id] || [],
-          ...(msg.attachmenturl && { 
-            attachment: { 
-              type: 'image' as const, 
-              url: msg.attachmenturl 
-            } 
-          }),
+          // Parse attachments JSON string and handle multiple attachments
+          ...(msg.attachments && (() => {
+            try {
+              const parsedAttachments = typeof msg.attachments === 'string' 
+                ? JSON.parse(msg.attachments) 
+                : msg.attachments;
+              
+              if (Array.isArray(parsedAttachments) && parsedAttachments.length > 0) {
+                return {
+                  attachments: parsedAttachments.map(att => ({
+                    type: att.type || 'image',
+                    url: att.url,
+                    fileName: att.fileName,
+                    fileSize: att.fileSize,
+                    mimeType: att.mimeType
+                  })),
+                  // Handle legacy single attachment (for backward compatibility)
+                  ...(parsedAttachments.length === 1 && {
+                    attachment: {
+                      type: parsedAttachments[0].type || 'image',
+                      url: parsedAttachments[0].url,
+                      fileName: parsedAttachments[0].fileName,
+                      fileSize: parsedAttachments[0].fileSize,
+                      mimeType: parsedAttachments[0].mimeType
+                    }
+                  })
+                };
+              }
+            } catch (error) {
+              console.error('Error parsing attachments JSON:', error);
+            }
+            return {};
+          })()),
           ...(msg.replyToId && {
             replyTo: {
               id: msg.replyToId,
@@ -268,8 +498,11 @@ export class MessageService {
             }
           })
         }));
+        // Sort ascending for UI after fetching newest-first
+        mapped.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
-        this.messagesCache.set(cacheKey, { data: mapped, ts: Date.now() });
+        this.evictOldEntries(this.messagesCache);
+        this.messagesCache.set(cacheKey, { data: mapped, ts: Date.now(), hits: 1 });
         return mapped;
       } finally {
         this.messagesInflight.delete(cacheKey);
@@ -368,24 +601,37 @@ export class MessageService {
    */
   static async saveMessageWithAttachment(
     message: Message, 
-    file: File
+    file: File,
+    chatId?: string
   ): Promise<boolean> {
     try {
-      // Import the uploadAttachment function
-      const { uploadAttachment } = await import('../utils/storageUtils');
+      // Import the StorageService
+      const { StorageService } = await import('./storageService');
       
-      // Upload the file to get its URL
-      const attachmenturl = await uploadAttachment({
-        userId: message.senderId,
-        file,
-      });
+      // Upload the file to get its URL using the new StorageService
+      const uploadResult = await StorageService.uploadFile(file, message.senderId, chatId);
+      
+      // Determine attachment type based on file MIME type
+      let type: 'image' | 'document' | 'audio' | 'video';
+      if (file.type.startsWith('image/')) {
+        type = 'image';
+      } else if (file.type.startsWith('video/')) {
+        type = 'video';
+      } else if (file.type.startsWith('audio/')) {
+        type = 'audio';
+      } else {
+        type = 'document';
+      }
       
       // Create a new message with the attachment URL
       const messageWithAttachment: Message = {
         ...message,
         attachment: {
-          type: 'image',
-          url: attachmenturl
+          type,
+          url: uploadResult.url,
+          fileName: uploadResult.fileName,
+          fileSize: uploadResult.fileSize,
+          mimeType: uploadResult.mimeType
         }
       };
       
@@ -398,16 +644,68 @@ export class MessageService {
   }
 
   /**
+   * Save a message with multiple attachments
+   * This will upload all attachments first, then save the message with attachment URLs
+   */
+  static async saveMessageWithAttachments(
+    message: Message, 
+    files: File[],
+    chatId?: string
+  ): Promise<boolean> {
+    try {
+      // Import the StorageService
+      const { StorageService } = await import('./storageService');
+      
+      // Upload all files to get their URLs
+      const uploadResults = await StorageService.uploadMultipleFiles(files, message.senderId, chatId);
+      
+      // Convert upload results to attachments
+      const attachments = uploadResults.map(result => {
+        let type: 'image' | 'document' | 'audio' | 'video';
+        if (result.mimeType.startsWith('image/')) {
+          type = 'image';
+        } else if (result.mimeType.startsWith('video/')) {
+          type = 'video';
+        } else if (result.mimeType.startsWith('audio/')) {
+          type = 'audio';
+        } else {
+          type = 'document';
+        }
+        
+        return {
+          type,
+          url: result.url,
+          fileName: result.fileName,
+          fileSize: result.fileSize,
+          mimeType: result.mimeType
+        };
+      });
+      
+      // Create a new message with all attachments
+      const messageWithAttachments: Message = {
+        ...message,
+        attachments
+      };
+      
+      // Save the message with all attachment URLs
+      return await this.saveMessage(messageWithAttachments);
+    } catch (error) {
+      console.error('Error saving message with attachments:', error);
+      return false;
+    }
+  }
+
+  /**
    * Delete a message and its attachment if any
    */
   static async deleteMessage(messageId: string): Promise<boolean> {
     const supabase = createClient();
     
     try {
-      // First, get the message to check if it has an attachment
+      // First, get the message to check if it has attachments
       const { data: message, error: fetchError } = await supabase
         .from('Message')
-        .select('attachmenturl')
+        .select('attachments')
         .eq('id', messageId)
         .single();
         
@@ -416,13 +714,25 @@ export class MessageService {
         return false;
       }
       
-      // If there's an attachment, delete it from storage
-      if (message?.attachmenturl) {
+      // If there are attachments, delete them from storage
+      if (message?.attachments && Array.isArray(message.attachments)) {
         try {
-          const { deleteAttachment } = await import('../utils/storageUtils');
-          await deleteAttachment(message.attachmenturl);
+          // Import the StorageService to delete attachments
+          const { StorageService } = await import('./storageService');
+          
+          // Delete each attachment
+          for (const attachment of message.attachments) {
+            if (attachment.url) {
+              try {
+                await StorageService.deleteFile(attachment.url);
+              } catch (deleteError) {
+                console.error('Error deleting attachment from storage:', deleteError);
+                // Continue with other attachments even if one fails
+              }
+            }
+          }
         } catch (storageError) {
-          console.error('Error deleting attachment:', storageError);
+          console.error('Error deleting attachments:', storageError);
           // Continue with message deletion even if attachment deletion fails
         }
       }
@@ -488,7 +798,8 @@ export class MessageService {
     try {
       const cacheKey = `unread:${userId}:${lastSeenISO || 'none'}`;
       const cached = this.unreadCache.get(cacheKey);
-      if (cached && this.isFresh(cached.ts, 10_000)) {
+      if (cached && this.isFresh(cached.ts, this.DEFAULT_TTL)) {
+        cached.hits += 1;
         return cached.data;
       }
       const inflight = this.unreadInflight.get(cacheKey);
@@ -524,9 +835,9 @@ export class MessageService {
           groupId,
           status,
           timestamp,
-          attachmenturl,
+          attachments,
           isAiMessage,
-          sender:User!senderId(name)
+          sender:User!senderId(name, avatarUrl)
         `)
         .eq('recipientId', userId)
         .neq('senderId', userId)
@@ -559,9 +870,9 @@ export class MessageService {
             groupId,
             status,
             timestamp,
-            attachmenturl,
-            isAiMessage,
-            sender:User!senderId(name)
+            attachments,
+                      isAiMessage,
+          sender:User!senderId(name, avatarUrl)
           `)
           .in('groupId', groupIds)
           .neq('senderId', userId)
@@ -614,12 +925,39 @@ export class MessageService {
           timestamp: msg.timestamp, // Keep as ISO string for consistent date handling
           status: msg.status as 'sent' | 'delivered' | 'read',
           isGroup: !!msg.groupId,
-          ...(msg.attachmenturl && { 
-            attachment: { 
-              type: 'image' as const, 
-              url: msg.attachmenturl 
-            } 
-          }),
+          // Parse attachments JSON string and handle multiple attachments
+          ...(msg.attachments && (() => {
+            try {
+              const parsedAttachments = typeof msg.attachments === 'string' 
+                ? JSON.parse(msg.attachments) 
+                : msg.attachments;
+              
+              if (Array.isArray(parsedAttachments) && parsedAttachments.length > 0) {
+                return {
+                  attachments: parsedAttachments.map(att => ({
+                    type: att.type || 'image',
+                    url: att.url,
+                    fileName: att.fileName,
+                    fileSize: att.fileSize,
+                    mimeType: att.mimeType
+                  })),
+                  // Handle legacy single attachment (for backward compatibility)
+                  ...(parsedAttachments.length === 1 && {
+                    attachment: {
+                      type: parsedAttachments[0].type || 'image',
+                      url: parsedAttachments[0].url,
+                      fileName: parsedAttachments[0].fileName,
+                      fileSize: parsedAttachments[0].fileSize,
+                      mimeType: parsedAttachments[0].mimeType
+                    }
+                  })
+                };
+              }
+            } catch (error) {
+              console.error('Error parsing attachments JSON:', error);
+            }
+            return {};
+          })()),
           ...(msg.replyToId && {
             replyTo: {
               id: msg.replyToId,
@@ -631,7 +969,8 @@ export class MessageService {
         });
       });
 
-          this.unreadCache.set(cacheKey, { data: unreadMessages, ts: Date.now() });
+          this.evictOldEntries(this.unreadCache);
+          this.unreadCache.set(cacheKey, { data: unreadMessages, ts: Date.now(), hits: 1 });
           return unreadMessages;
         } catch (error) {
           console.error('Error fetching unread messages:', error);
@@ -658,13 +997,15 @@ export class MessageService {
   static async getLatestMessagesForContacts(
     userId: string,
     contacts: Contact[],
-    perContactLimit: number = 1
+    perContactLimit: number = 1,
+    options?: { sinceDays?: number }
   ): Promise<Record<string, Message[]>> {
     const supabase = createClient();
     try {
       const cacheKey = `latest:${userId}:${contacts.length}:${perContactLimit}`;
       const cached = this.latestPerContactsCache.get(cacheKey);
-      if (cached && this.isFresh(cached.ts, 15_000)) {
+      if (cached && this.isFresh(cached.ts, this.LATEST_TTL)) {
+        cached.hits += 1;
         return cached.data;
       }
       const inflight = this.latestPerContactsInflight.get(cacheKey);
@@ -676,6 +1017,12 @@ export class MessageService {
       const groupIds = contacts.filter(c => c.isGroup).map(c => c.id);
 
       const results: Message[] = [];
+      const sinceIso = (() => {
+        const days = options?.sinceDays ?? 90;
+        const d = new Date();
+        d.setDate(d.getDate() - days);
+        return d.toISOString();
+      })();
 
       // Fetch latest direct messages in a single query using OR with IN lists
       if (directContactIds.length > 0) {
@@ -691,7 +1038,7 @@ export class MessageService {
           `and(senderId.eq.${userId},aiSenderId.in.(${idList}))`
         ].join(',');
 
-        const { data, error } = await supabase
+        let directQuery = supabase
           .from('Message')
           .select(`
             id,
@@ -703,7 +1050,7 @@ export class MessageService {
             groupId,
             status,
             timestamp,
-            attachmenturl,
+            attachments,
             isAiMessage,
             isForwarded,
             forwardedFromMessageId,
@@ -717,8 +1064,11 @@ export class MessageService {
           `)
           .is('groupId', null)
           .or(orClause)
+          .gte('timestamp', sinceIso)
           .order('timestamp', { ascending: false })
           .limit(Math.max(50, perContactLimit * directContactIds.length * 2));
+
+        const { data, error } = await directQuery;
 
         if (error) {
           console.error('Error fetching latest direct messages:', error);
@@ -739,8 +1089,15 @@ export class MessageService {
               forwardedFromContactId: (msg as any).forwardedFromContactId || undefined,
               forwardedById: (msg as any).forwardedById || undefined,
               forwardedToContactId: (msg as any).forwardedToContactId || undefined,
-              ...(msg.attachmenturl && { 
-                attachment: { type: 'image' as const, url: msg.attachmenturl }
+              // Handle legacy single attachment (for backward compatibility)
+              ...(msg.attachments && Array.isArray(msg.attachments) && msg.attachments.length === 1 && {
+                attachment: {
+                  type: msg.attachments[0].type || 'image',
+                  url: msg.attachments[0].url,
+                  fileName: msg.attachments[0].fileName,
+                  fileSize: msg.attachments[0].fileSize,
+                  mimeType: msg.attachments[0].mimeType
+                }
               }),
               ...(msg.replyToId && {
                 replyTo: {
@@ -757,7 +1114,7 @@ export class MessageService {
 
       // Fetch latest group messages
       if (groupIds.length > 0) {
-        const { data, error } = await supabase
+        let groupQuery = supabase
           .from('Message')
           .select(`
             id,
@@ -769,7 +1126,7 @@ export class MessageService {
             groupId,
             status,
             timestamp,
-            attachmenturl,
+            attachments,
             isAiMessage,
             isForwarded,
             forwardedFromMessageId,
@@ -782,8 +1139,11 @@ export class MessageService {
             replyToSenderName
           `)
           .in('groupId', groupIds)
+          .gte('timestamp', sinceIso)
           .order('timestamp', { ascending: false })
           .limit(Math.max(50, perContactLimit * groupIds.length * 2));
+
+        const { data, error } = await groupQuery;
 
         if (error) {
           console.error('Error fetching latest group messages:', error);
@@ -804,8 +1164,15 @@ export class MessageService {
               forwardedFromContactId: (msg as any).forwardedFromContactId || undefined,
               forwardedById: (msg as any).forwardedById || undefined,
               forwardedToContactId: (msg as any).forwardedToContactId || undefined,
-              ...(msg.attachmenturl && { 
-                attachment: { type: 'image' as const, url: msg.attachmenturl }
+              // Handle legacy single attachment (for backward compatibility)
+              ...(msg.attachments && Array.isArray(msg.attachments) && msg.attachments.length === 1 && {
+                attachment: {
+                  type: msg.attachments[0].type || 'image',
+                  url: msg.attachments[0].url,
+                  fileName: msg.attachments[0].fileName,
+                  fileSize: msg.attachments[0].fileSize,
+                  mimeType: msg.attachments[0].mimeType
+                }
               }),
               ...(msg.replyToId && {
                 replyTo: {
@@ -837,11 +1204,35 @@ export class MessageService {
       // Ensure ascending order within each contact bucket
       Object.values(latestByContact).forEach(arr => arr.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()));
 
-      this.latestPerContactsCache.set(cacheKey, { data: latestByContact, ts: Date.now() });
+      this.evictOldEntries(this.latestPerContactsCache);
+      this.latestPerContactsCache.set(cacheKey, { data: latestByContact, ts: Date.now(), hits: 1 });
       return latestByContact;
     } catch (error) {
       console.error('Error fetching latest messages for contacts:', error);
       return {};
+    }
+  }
+
+  /**
+   * Mark a message as read in the database
+   */
+  static async markMessageAsRead(messageId: string): Promise<boolean> {
+    try {
+      const supabase = createClient();
+      const { error } = await supabase
+        .from('Message')
+        .update({ status: 'read' })
+        .eq('id', messageId);
+
+      if (error) {
+        console.error('Error marking message as read:', error);
+        return false;
+      }
+      
+      return true;
+    } catch (error) {
+      console.error('Error marking message as read:', error);
+      return false;
     }
   }
 }

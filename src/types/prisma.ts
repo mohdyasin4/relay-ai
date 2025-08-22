@@ -23,7 +23,7 @@ export interface PrismaMessage {
   recipientId: string | null;
   status: string;
   timestamp: Date;
-  attachmenturl: string | null;
+  attachments: any | null; // JSON array of file attachments
   sender: PrismaUser;
   reactions: PrismaReaction[];
 }
@@ -112,10 +112,14 @@ export function prismaMessageToMessage(prismaMessage: PrismaMessage): Message {
     senderName: prismaMessage.sender.name,
     timestamp: prismaMessage.timestamp,
     status: prismaMessage.status as 'sent' | 'delivered' | 'read',
-    attachment: prismaMessage.attachmenturl
+    // Handle legacy single attachment (for backward compatibility)
+    attachment: prismaMessage.attachments && Array.isArray(prismaMessage.attachments) && prismaMessage.attachments.length === 1
       ? {
-          type: 'image',
-          url: prismaMessage.attachmenturl,
+          type: prismaMessage.attachments[0].type || 'image',
+          url: prismaMessage.attachments[0].url,
+          fileName: prismaMessage.attachments[0].fileName,
+          fileSize: prismaMessage.attachments[0].fileSize,
+          mimeType: prismaMessage.attachments[0].mimeType
         }
       : undefined,
     reactions: prismaMessage.reactions.map(r => ({

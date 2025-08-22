@@ -4,7 +4,49 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Gemini Messenger</title>
+    <title>Relay-AI | AI-Powered Real Time Chat Application</title>
+    
+    <!-- Google Analytics -->
+    <script>
+      // Google Analytics - Replace GA_MEASUREMENT_ID with your actual ID
+      (function() {
+        const GA_ID = 'G-H8BLWQRJXV'; // Replace with your Google Analytics Measurement ID (G-XXXXXXXXXX)
+        
+        if (GA_ID && GA_ID !== 'GA_MEASUREMENT_ID') {
+          // Load Google Analytics
+          const script = document.createElement('script');
+          script.async = true;
+          script.src = `https://www.googletagmanager.com/gtag/js?id=${GA_ID}`;
+          document.head.appendChild(script);
+          
+          // Initialize gtag
+          window.dataLayer = window.dataLayer || [];
+          function gtag(){dataLayer.push(arguments);}
+          gtag('js', new Date());
+          gtag('config', GA_ID);
+          
+          // Make gtag available globally
+          window.gtag = gtag;
+          
+          console.log('Google Analytics initialized with ID:', GA_ID);
+        } else {
+          console.log('Google Analytics not configured - please set GA_MEASUREMENT_ID');
+        }
+      })();
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <style>
+      /* Poppins font configuration */
+      @font-face {
+        font-family: 'Poppins';
+        font-style: normal;
+        font-weight: 300 800;
+        font-display: swap;
+        src: url('https://fonts.gstatic.com/s/poppins/v20/pxiEyp8kv8JHgFVrJJfecg.woff2') format('woff2');
+      }
+    </style>
     <style>
       /* For custom scrollbars */
       ::-webkit-scrollbar {
@@ -88,6 +130,11 @@
         color: #818cf8; /* indigo-400 */
         background-color: rgba(129, 140, 248, 0.15);
       }
+      
+      /* Ensure code blocks use default monospace font instead of Poppins */
+      pre, code, .prose pre, .prose code, .chatgpt-markdown pre, .chatgpt-markdown code {
+        font-family: ui-monospace, SFMono-Regular, 'SF Mono', Consolas, 'Liberation Mono', Menlo, Monaco, 'Cascadia Code', 'Roboto Mono', 'Oxygen Mono', 'Ubuntu Monospace', 'Source Code Pro', 'Fira Mono', 'Droid Sans Mono', 'Courier New', monospace !important;
+      }
     </style>
   <script type="importmap">
 {
@@ -103,6 +150,9 @@
 }
 </script>
 <link rel="stylesheet" href="/index.css">
+<link rel="preload" as="image" href="/images/light.svg" />
+<link rel="preload" as="image" href="/images/dark.svg" />
+<link rel="preload" as="image" href="/images/system.svg" />
 </head>
   <body>
     <div id="root"></div>

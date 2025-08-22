@@ -1,7 +1,27 @@
 import React, { useState, useEffect } from 'react';
-import Modal from './Modal';
 import GeneratedAvatar from './GeneratedAvatar';
 import type { Contact, User } from '../types';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { motion } from "motion/react";
+import { 
+  Users, 
+  Bot, 
+  UserCheck, 
+  UserX, 
+  Edit3,
+  Save,
+  Crown
+} from 'lucide-react';
 
 interface EditGroupModalProps {
   isOpen: boolean;
@@ -15,18 +35,21 @@ interface EditGroupModalProps {
 const EditGroupModal: React.FC<EditGroupModalProps> = ({ isOpen, onClose, group, contacts, aiPersonas, onUpdateGroup }) => {
   const [groupName, setGroupName] = useState('');
   const [selectedMembers, setSelectedMembers] = useState<Set<string>>(new Set());
+  const [isUpdating, setIsUpdating] = useState(false);
 
   useEffect(() => {
     if (isOpen && group) {
       setGroupName(group.name);
-      // Exclude the user's own ID from the initial set for selection purposes,
-      // as it's implicitly included on update.
-      const nonUserMembers = group.memberIds?.filter(id => id !== group.creatorId) || [];
-      setSelectedMembers(new Set(nonUserMembers));
+      // Initialize with current group members
+      const currentMembers = group.memberIds || [];
+      setSelectedMembers(new Set(currentMembers));
     }
   }, [isOpen, group]);
   
   const handleToggleMember = (contactId: string) => {
+    // Prevent removing the group creator
+    if (contactId === group?.creatorId) return;
+    
     setSelectedMembers(prev => {
       const newSet = new Set(prev);
       if (newSet.has(contactId)) {
@@ -38,99 +61,228 @@ const EditGroupModal: React.FC<EditGroupModalProps> = ({ isOpen, onClose, group,
     });
   };
 
-  const handleUpdate = () => {
-    if (group && groupName.trim()) { // Allow empty member list to remove all others
-      onUpdateGroup(group.id, groupName.trim(), Array.from(selectedMembers));
-      onClose();
+  const handleUpdate = async () => {
+    if (group && groupName.trim()) {
+      setIsUpdating(true);
+      try {
+        // Ensure creator is always included
+        const finalMembers = new Set(selectedMembers);
+        if (group.creatorId) {
+          finalMembers.add(group.creatorId);
+        }
+        
+        await onUpdateGroup(group.id, groupName.trim(), Array.from(finalMembers));
+        onClose();
+      } catch (error) {
+        console.error('Error updating group:', error);
+      } finally {
+        setIsUpdating(false);
+      }
     }
   };
   
-  const canUpdate = groupName.trim();
+  const canUpdate = groupName.trim() && !isUpdating;
   const dummyUser: User = { id: '', name: '' };
   
-  const humanMembers = contacts.filter(c => c.id !== group?.creatorId);
+  // Separate human members and AI personas, include creator in available members
+  const humanMembers = contacts.filter(c => !c.isAi);
+  const currentMemberCount = selectedMembers.size;
 
   return (
-    <Modal
-      isOpen={isOpen}
-      onClose={onClose}
-      title="Edit Group"
-      footer={
-        <div className="flex justify-end">
-          <button onClick={handleUpdate} disabled={!canUpdate} className="px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 transition-colors disabled:bg-slate-400 dark:disabled:bg-slate-700 disabled:cursor-not-allowed">
-            Save Changes
-          </button>
+    <Dialog open={isOpen} onOpenChange={onClose}>
+      <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-hidden">
+        <DialogHeader className="pb-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl flex items-center justify-center shadow-lg">
+              <Edit3 className="h-5 w-5 text-white" />
+            </div>
+            <div>
+              <DialogTitle className="text-xl font-bold">Edit Group</DialogTitle>
+              <p className="text-sm text-muted-foreground">
+                Manage group settings and members
+              </p>
+            </div>
+          </div>
+        </DialogHeader>
+
+        <div className="flex-1 overflow-hidden">
+          <ScrollArea className="h-full pr-4">
+            <div className="space-y-6">
+              {/* Group Name Section */}
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3 }}
+                className="bg-card rounded-xl p-4 border border-border/50"
+              >
+                <Label htmlFor="groupName" className="text-base font-semibold mb-2 block">Group Name</Label>
+                <Input
+                  id="groupName"
+                  value={groupName}
+                  onChange={(e) => setGroupName(e.target.value)}
+                  placeholder="Enter group name"
+                  className="text-base"
+                />
+              </motion.div>
+
+              {/* Current Members Info */}
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3, delay: 0.1 }}
+                className="bg-primary/5 rounded-xl p-4 border border-primary/20"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Users className="h-5 w-5 text-primary" />
+                    <span className="font-semibold">Current Members: {currentMemberCount}</span>
+                  </div>
+                  <div className="text-sm text-muted-foreground">
+                    {currentMemberCount === 0 ? 'No members selected' : 
+                     currentMemberCount === 1 ? '1 member' : 
+                     `${currentMemberCount} members`}
+                  </div>
+                </div>
+              </motion.div>
+
+              {/* Human Members Section */}
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3, delay: 0.2 }}
+                className="bg-card rounded-xl p-4 border border-border/50"
+              >
+                <div className="flex items-center gap-2 mb-4">
+                  <Users className="h-5 w-5 text-primary" />
+                  <h3 className="text-base font-semibold">Team Members</h3>
+                </div>
+                <div className="max-h-48 overflow-y-auto space-y-2">
+                  {humanMembers.map(contact => {
+                    const isSelected = selectedMembers.has(contact.id);
+                    const isCreator = contact.id === group?.creatorId;
+                    return (
+                      <motion.div
+                        key={contact.id}
+                        whileHover={{ scale: 1.02 }}
+                        whileTap={{ scale: 0.98 }}
+                      >
+                        <button
+                          onClick={() => handleToggleMember(contact.id)}
+                          disabled={isCreator}
+                          className={`w-full text-left p-3 flex items-center gap-3 rounded-lg transition-all ${
+                            isSelected 
+                              ? 'bg-primary/10 border border-primary/30 shadow-sm' 
+                              : 'hover:bg-muted/50 border border-transparent'
+                          } ${isCreator ? 'opacity-90' : 'cursor-pointer'}`}
+                        >
+                          <div className="relative">
+                            {isCreator ? (
+                              <Crown className="w-5 h-5 text-amber-500" />
+                            ) : isSelected ? (
+                              <UserCheck className="w-5 h-5 text-primary" />
+                            ) : (
+                              <UserX className="w-5 h-5 text-muted-foreground" />
+                            )}
+                          </div>
+                          <GeneratedAvatar 
+                            name={contact.name} 
+                            allContacts={contacts} 
+                            currentUser={dummyUser}
+                            className="w-8 h-8"
+                          />
+                          <div className="flex-1">
+                            <span className="font-medium">{contact.name}</span>
+                            {isCreator && (
+                              <span className="text-xs text-amber-600 dark:text-amber-400 ml-2 px-2 py-1 bg-amber-100 dark:bg-amber-900/30 rounded-full">
+                                Creator
+                              </span>
+                            )}
+                          </div>
+                        </button>
+                      </motion.div>
+                    );
+                  })}
+                </div>
+              </motion.div>
+
+              {/* AI Assistants Section */}
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3, delay: 0.3 }}
+                className="bg-card rounded-xl p-4 border border-border/50"
+              >
+                <div className="flex items-center gap-2 mb-4">
+                  <Bot className="h-5 w-5 text-primary" />
+                  <h3 className="text-base font-semibold">AI Assistants</h3>
+                  <span className="px-2 py-1 bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-200 text-xs font-medium rounded-full">
+                    Optional
+                  </span>
+                </div>
+                <div className="max-h-48 overflow-y-auto space-y-2">
+                  {aiPersonas.map(persona => {
+                    const isSelected = selectedMembers.has(persona.id);
+                    return (
+                      <motion.div
+                        key={persona.id}
+                        whileHover={{ scale: 1.02 }}
+                        whileTap={{ scale: 0.98 }}
+                      >
+                        <button
+                          onClick={() => handleToggleMember(persona.id)}
+                          className={`w-full text-left p-3 flex items-center gap-3 rounded-lg transition-all ${
+                            isSelected 
+                              ? 'bg-primary/10 border border-primary/30 shadow-sm' 
+                              : 'hover:bg-muted/50 border border-transparent'
+                          }`}
+                        >
+                          <div className="relative">
+                            {isSelected ? (
+                              <UserCheck className="w-5 h-5 text-primary" />
+                            ) : (
+                              <UserX className="w-5 h-5 text-muted-foreground" />
+                            )}
+                          </div>
+                          <GeneratedAvatar 
+                            name={persona.name} 
+                            allContacts={aiPersonas} 
+                            currentUser={dummyUser}
+                            className="w-8 h-8"
+                          />
+                          <div className="flex-1">
+                            <span className="font-medium">{persona.name}</span>
+                            <div className="text-xs text-muted-foreground">AI Assistant</div>
+                          </div>
+                        </button>
+                      </motion.div>
+                    );
+                  })}
+                </div>
+              </motion.div>
+            </div>
+          </ScrollArea>
         </div>
-      }
-    >
-      <div className="space-y-4">
-        <div>
-          <label htmlFor="editGroupName" className="block mb-2 text-sm font-medium text-slate-600 dark:text-slate-300">Group Name</label>
-          <input
-            type="text"
-            id="editGroupName"
-            value={groupName}
-            onChange={(e) => setGroupName(e.target.value)}
-            className="bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-200 text-sm rounded-lg focus:ring-indigo-500 focus:border-indigo-500 block w-full p-2.5"
-            placeholder="e.g., Project Team"
-          />
-        </div>
-        <div>
-          <h3 className="mb-2 text-sm font-medium text-slate-600 dark:text-slate-300">Select Members</h3>
-          <ul className="max-h-40 overflow-y-auto space-y-1 pr-2 -mr-2">
-            {humanMembers.map(contact => {
-              const isSelected = selectedMembers.has(contact.id);
-              return (
-                <li key={contact.id}>
-                  <button
-                    onClick={() => handleToggleMember(contact.id)}
-                    className={`w-full text-left p-2 flex items-center gap-3 rounded-lg transition-colors ${
-                      isSelected ? 'bg-indigo-100 dark:bg-indigo-900/40' : 'hover:bg-slate-100 dark:hover:bg-slate-800/50'
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={isSelected}
-                      readOnly
-                      className="w-4 h-4 rounded text-indigo-600 bg-slate-200 dark:bg-slate-700 border-slate-400 dark:border-slate-600 focus:ring-indigo-500 pointer-events-none"
-                    />
-                    <GeneratedAvatar name={contact.name} allContacts={contacts} currentUser={dummyUser} />
-                    <span className="font-semibold text-slate-800 dark:text-slate-200">{contact.name}</span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-        <div>
-          <h3 className="mb-2 text-sm font-medium text-slate-600 dark:text-slate-300">Manage Assistants</h3>
-           <ul className="max-h-40 overflow-y-auto space-y-1 pr-2 -mr-2">
-            {aiPersonas.map(persona => {
-              const isSelected = selectedMembers.has(persona.id);
-              return (
-                <li key={persona.id}>
-                  <button
-                    onClick={() => handleToggleMember(persona.id)}
-                    className={`w-full text-left p-2 flex items-center gap-3 rounded-lg transition-colors ${
-                      isSelected ? 'bg-indigo-100 dark:bg-indigo-900/40' : 'hover:bg-slate-100 dark:hover:bg-slate-800/50'
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={isSelected}
-                      readOnly
-                      className="w-4 h-4 rounded text-indigo-600 bg-slate-200 dark:bg-slate-700 border-slate-400 dark:border-slate-600 focus:ring-indigo-500 pointer-events-none"
-                    />
-                    <GeneratedAvatar name={persona.name} allContacts={aiPersonas} currentUser={dummyUser} />
-                    <span className="font-semibold text-slate-800 dark:text-slate-200">{persona.name}</span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-      </div>
-    </Modal>
+
+        <DialogFooter className="pt-4">
+          <div className="flex gap-3 w-full justify-end">
+            <Button variant="outline" onClick={onClose} disabled={isUpdating}>
+              Cancel
+            </Button>
+            <Button 
+              onClick={handleUpdate} 
+              disabled={!canUpdate}
+              className="gap-2"
+            >
+              {isUpdating && (
+                <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+              )}
+              <Save className="w-4 h-4" />
+              Update Group
+            </Button>
+          </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 };
 

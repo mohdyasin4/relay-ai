@@ -1,7 +1,11 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import { Analytics } from '@vercel/analytics/react';
 // import { DatabaseService } from './services/databaseService';
 import { useSelectedContactWithLastSeen } from './hooks/useSelectedContactWithLastSeen';
-import Sidebar from './components/Sidebar';
+import { useOptimizedContactSelection } from './hooks/useOptimizedContactSelection';
+import AppSidebar from './components/AppSidebar';
+import MobileSidebar from './components/MobileSidebar';
+import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
 import ChatView from './components/ChatView';
 import SettingsModal from './components/SettingsModal';
 // import NewGroupModal from './components/NewGroupModal';
@@ -11,29 +15,53 @@ import Lightbox from './components/Lightbox';
 import ForwardMessageModal from './components/ForwardMessageModal';
 import InviteUserModal from './components/InviteUserModal';
 import FriendRequestsModal from './components/FriendRequestsModal';
-import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from './components/ui/resizable';
+// import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from './components/ui/resizable';
 import { generateUUID } from './utils/uuidUtils';
 import { sendMessageToBot } from './services/geminiService';
 import { FriendsService } from './services/friendsService';
 import { MessageService } from './services/messageService';
 import { GroupService } from './services/groupService';
+import { databaseClient } from './services/databaseClient';
 import { useLocalStorage } from './hooks/useLocalStorage';
 import { useAuth } from './contexts/AuthContext';
-import type { Contact, Message, MessagesState, User, Attachment, Theme, MqttPayload, Invitation, ReadReceipt, DeliveryReceipt, TypingIndicatorPayload, ReactionPayload } from './types';
+import type { Contact, Message, MessagesState, User, Attachment, MqttPayload, Invitation, ReadReceipt, DeliveryReceipt, TypingIndicatorPayload, ReactionPayload, FriendRequest, FriendRequestProcessed } from './types';
 import { AI_PERSONAS } from './constants';
 import { mqttService } from './services/mqttService';
-import { cn } from './lib/utils';
+// UI-only imports removed (unused)
+import { AnimatePresence, motion } from 'motion/react';
+// import { cn } from './lib/utils';
 
 const App: React.FC = () => {
-  console.log('App component rendering');
+  if (import.meta.env?.MODE === 'development') {
+    console.log('App component rendering');
+  }
   const { user: authUser, logout } = useAuth(); // Access authenticated user and logout from AuthContext
-  console.log('Auth user from context:', authUser);
+  if (import.meta.env?.MODE === 'development') {
+    console.log('Auth user from context:', authUser);
+  }
   const [user, setUser] = useState<User | null>(authUser); // Initialize with auth user
-  const [theme, setTheme] = useLocalStorage<Theme>('theme', 'dark');
+  // const { theme } = useTheme();
+
   // Persistent sidebar width in px
   // Use default width unless user has resized
+  // Desktop sidebar width (resizable)
   const DEFAULT_SIDEBAR_WIDTH = 320;
   const [sidebarWidth, setSidebarWidth] = useLocalStorage<number>('sidebarWidth', DEFAULT_SIDEBAR_WIDTH);
+  const resizingRef = useRef<boolean>(false);
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!resizingRef.current) return;
+      const newWidth = Math.min(Math.max(e.clientX, 220), 600);
+      setSidebarWidth(newWidth);
+    };
+    const onUp = () => { resizingRef.current = false; };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [setSidebarWidth]);
   // Avoid local MQTT status state to prevent re-renders; use mqttService.isConnected()
 
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -41,9 +69,14 @@ const App: React.FC = () => {
   const [messages, setMessages] = useState<MessagesState>({});
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isContactsLoading, setIsContactsLoading] = useState<boolean>(true);
+  const [contactsError, setContactsError] = useState<string | null>(null);
   const [typingIndicators, setTypingIndicators] = useState<Record<string, Record<string, string>>>({});
   
   const [firstUnreadMessageId, setFirstUnreadMessageId] = useState<string | null>(null);
+  
+  // UI stream state for streaming AI typewriter in ChatView
+  const [uiAiStream, setUiAiStream] = useState<{ contactId: string; messageId: string; text?: string; stream?: AsyncIterable<string> } | null>(null);
 
   const [isSettingsOpen, setSettingsOpen] = useState(false);
   const [, setNewGroupOpen] = useState(false);
@@ -51,12 +84,14 @@ const App: React.FC = () => {
   const [isInviteModalOpen, setInviteModalOpen] = useState(false);
   const [isFriendRequestsOpen, setFriendRequestsOpen] = useState(false);
   const [pendingFriendRequests, setPendingFriendRequests] = useState<number>(0);
+  const [lastActivity, setLastActivity] = useState(Date.now());
+  const [isUserActive, setIsUserActive] = useState(true);
 
   const [editingGroup, setEditingGroup] = useState<Contact | null>(null);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [forwardingMessage, setForwardingMessage] = useState<Message | null>(null);
   
-  const isResizing = useRef(false);
+  // const isResizing = useRef(false);
 
   // --- Start of Quote Bot Proactive Messaging ---
   const contactsRef = useRef(contacts);
@@ -120,7 +155,7 @@ const App: React.FC = () => {
                 // Save quote message to database
                 try {
                     await MessageService.saveMessage(newQuoteMessage);
-                    console.log('Quote message saved to database');
+                    if (import.meta.env?.MODE === 'development') console.log('Quote message saved to database');
                 } catch (error) {
                     console.error('Failed to save quote message to database:', error);
                 }
@@ -175,47 +210,158 @@ const App: React.FC = () => {
       window.addEventListener('beforeunload', handleUnload);
       window.addEventListener('unload', handleUnload);
 
-      // Handle tab inactivity (visibilitychange)
-      const handleVisibilityChange = () => {
-        // Do not disconnect on simple tab hide to avoid churn and extra API calls
-      };
-      document.addEventListener('visibilitychange', handleVisibilityChange);
+              // Handle tab inactivity (visibilitychange) with delay
+        let visibilityTimeout: NodeJS.Timeout | null = null;
+        const handleVisibilityChange = () => {
+          if (document.hidden) {
+            // User switched to another tab or minimized browser
+            // Wait 30 seconds before marking offline to avoid flicker
+            console.log('[App] Tab hidden, will mark offline in 30 seconds if still hidden');
+            setIsUserActive(false);
+            visibilityTimeout = setTimeout(() => {
+              if (document.hidden && authUser) {
+                console.log('[App] Tab still hidden after 30s, setting user status to offline');
+                mqttService.publish(`user/${authUser.id}/status`, {
+                  status: 'offline',
+                  timestamp: new Date().toISOString()
+                });
+                // Update database status
+                databaseClient.updateUserStatus(authUser.id, 'offline').catch((error: Error) =>
+                  console.error('Failed to update user status in database:', error)
+                );
+              }
+            }, 30000); // 30 seconds delay
+          } else {
+            // User returned to the tab
+            console.log('[App] Tab visible, setting user status to online');
+            if (visibilityTimeout) {
+              clearTimeout(visibilityTimeout);
+              visibilityTimeout = null;
+            }
+            setIsUserActive(true);
+            setLastActivity(Date.now());
+            if (authUser) {
+              mqttService.publish(`user/${authUser.id}/status`, {
+                status: 'online',
+                timestamp: new Date().toISOString()
+              });
+              // Update database status
+              databaseClient.updateUserStatus(authUser.id, 'online').catch((error: Error) =>
+                console.error('Failed to update user status in database:', error)
+              );
+            }
+          }
+        };
+                document.addEventListener('visibilitychange', handleVisibilityChange);
 
-      return () => {
-        window.removeEventListener('beforeunload', handleUnload);
-        window.removeEventListener('unload', handleUnload);
-        document.removeEventListener('visibilitychange', handleVisibilityChange);
-      };
+        // Track user activity to maintain online status (without publishing every time)
+        const handleUserActivity = () => {
+          if (isUserActive && authUser) {
+            setLastActivity(Date.now());
+            // Don't publish on every activity - MQTT heartbeat handles this
+          }
+        };
+
+        // Add activity listeners
+        document.addEventListener('mousedown', handleUserActivity);
+        document.addEventListener('keydown', handleUserActivity);
+        document.addEventListener('scroll', handleUserActivity);
+        document.addEventListener('touchstart', handleUserActivity);
+
+                return () => {
+          window.removeEventListener('beforeunload', handleUnload);
+          window.removeEventListener('unload', handleUnload);
+          document.removeEventListener('visibilitychange', handleVisibilityChange);
+          document.removeEventListener('mousedown', handleUserActivity);
+          document.removeEventListener('keydown', handleUserActivity);
+          document.removeEventListener('scroll', handleUserActivity);
+          document.removeEventListener('touchstart', handleUserActivity);
+          // Clean up visibility timeout
+          if (visibilityTimeout) {
+            clearTimeout(visibilityTimeout);
+          }
+        };
     }
   }, [authUser, setUser]);
 
-  // Removed eager load of all messages for sorting to cut down on API calls.
+  // Inactivity timer to set status to offline after 5 minutes of no activity
+  useEffect(() => {
+    if (!authUser || !isUserActive) return;
+
+    const inactivityTimeout = setTimeout(() => {
+      console.log('[App] User inactive for 5 minutes, setting status to offline');
+      setIsUserActive(false);
+      mqttService.publish(`user/${authUser.id}/status`, {
+        status: 'offline',
+        timestamp: new Date().toISOString()
+      });
+      // Update database status
+      databaseClient.updateUserStatus(authUser.id, 'offline').catch((error: Error) =>
+        console.error('Failed to update user status in database:', error)
+      );
+    }, 5 * 60 * 1000); // 5 minutes
+
+    return () => clearTimeout(inactivityTimeout);
+  }, [authUser, isUserActive, lastActivity]);
+
+  // On initial app load, fetch last 50 messages for each contact
+  // REMOVED: This was causing delays and blocking the UI
+  // Messages are now loaded on-demand when contacts are selected
 
   const loadContactsFromDatabase = useCallback(async () => {
     if (!user) return;
     
     console.log('Loading contacts from database for user:', user.id);
     try {
+      setIsContactsLoading(true);
+      setContactsError(null);
+      
       // Load all contacts from database (including AI assistants)
       const allContacts = await FriendsService.getContacts(user.id);
       console.log('Contacts loaded from database:', allContacts);
       
-      // Subscribe to MQTT topics for new contacts
-      allContacts.forEach(contact => {
-        if (!contact.isAi) {
-          const topic = contact.isGroup ? `chat/${contact.id}` : (contact.topicId || `chat/${[user.id, contact.id].sort().join('-')}`);
-          mqttService.subscribe(topic);
-          console.log(`Subscribed to topic for contact ${contact.name}: ${topic}`);
-        }
-      });
-      
+      // Set contacts immediately for instant UI feedback
       setContacts(allContacts);
+      setIsContactsLoading(false);
       
-      // Do not prefetch all messages; messages load lazily when opening a chat
+      // Subscribe to MQTT topics for new contacts asynchronously
+      setTimeout(() => {
+        allContacts.forEach(contact => {
+          if (!contact.isAi) {
+            const topic = contact.isGroup ? `chat/${contact.id}` : (contact.topicId || `chat/${[user.id, contact.id].sort().join('-')}`);
+            mqttService.subscribe(topic);
+            console.log(`Subscribed to topic for contact ${contact.name}: ${topic}`);
+          }
+        });
+      }, 0);
+      
+      // Prime latest messages immediately - no setTimeout to prevent flashing
+      try {
+        const latest = await MessageService.getLatestMessagesForContacts(user.id, allContacts, 50, { sinceDays: 90 });
+        setMessages(prev => {
+          const next = { ...prev };
+          for (const cid of Object.keys(latest)) {
+            const existing = next[cid] || [];
+            const incoming = latest[cid] || [];
+            const existingIds = new Set(existing.map(m => m.id));
+            const unique = incoming.filter(m => !existingIds.has(m.id));
+            if (unique.length > 0) {
+              next[cid] = [...existing, ...unique].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+            }
+          }
+          return next;
+        });
+        console.log('Latest messages loaded immediately for contacts:', Object.keys(latest));
+      } catch (e) {
+        console.error('Priming latest messages failed (non-blocking):', e);
+      }
+      
     } catch (error) {
       console.error('Failed to load contacts from database:', error);
       // Fallback to empty contacts on error
       setContacts([]);
+      setContactsError('Failed to load contacts. Please try again.');
+      setIsContactsLoading(false);
     }
   }, [user]);
 
@@ -224,12 +370,7 @@ const App: React.FC = () => {
     if (user) {
       loadContactsFromDatabase();
       // Load initial friend requests count
-      (async () => {
-        try {
-          const result = await FriendsService.getFriendRequests(user.id);
-          setPendingFriendRequests((result?.received?.length || 0));
-        } catch {}
-      })();
+      loadPendingFriendRequests();
       
       // Realtime subscription for friend requests
       mqttService.subscribe(`user/${user.id}`);
@@ -254,7 +395,7 @@ const App: React.FC = () => {
   const processQueuedMessages = useCallback(async () => {
     if (!user) return;
     
-    console.log('Processing queued messages...');
+    if (import.meta.env?.MODE === 'development') console.log('Processing queued messages...');
     
     // Find all queued messages in current messages state
     const queuedMessageIds: string[] = [];
@@ -295,23 +436,30 @@ const App: React.FC = () => {
     }
   }, [user, messages]);
 
-  useEffect(() => {
-    document.documentElement.classList.toggle('dark', theme !== 'light');
-    document.documentElement.classList.toggle('midnight', theme === 'midnight');
-    
-    let bodyClass = '';
-    if (theme === 'light') {
-      bodyClass = 'bg-slate-50';
-    } else if (theme === 'dark') {
-      bodyClass = 'bg-slate-950';
-    } else { // midnight
-      bodyClass = 'bg-slate-900';
-    }
-    document.body.className = bodyClass;
-  }, [theme]);
-
   const handleMqttPayload = useCallback(async (payload: MqttPayload, topic: string) => {
-    console.log('Received MQTT Payload:', payload, 'on topic:', topic);
+    if (import.meta.env?.MODE === 'development') console.log('Received MQTT Payload:', payload, 'on topic:', topic);
+
+    // Handle user status updates
+    if (topic.includes('/status') && (payload as any).status) {
+      const userId = topic.split('/')[1]; // Extract user ID from topic like "user/123/status"
+      const statusPayload = payload as unknown as { status: 'online' | 'offline' | 'away'; timestamp?: string };
+      if (userId && userId !== user?.id) {
+        setContacts(prevContacts => {
+          const contact = prevContacts.find(c => c.id === userId);
+          if (contact && !contact.isAi) {
+            return prevContacts.map(c => 
+              c.id === userId ? { 
+                ...c, 
+                status: statusPayload.status,
+                lastSeen: statusPayload.status === 'offline' ? new Date().toISOString() : c.lastSeen
+              } : c
+            );
+          }
+          return prevContacts;
+        });
+      }
+      return; // Don't process status updates as regular messages
+    }
 
     // --- Unified Presence Update ---
     const getSenderId = (p: MqttPayload): string | undefined => {
@@ -358,6 +506,16 @@ const App: React.FC = () => {
         console.log('Reloading contacts due to friend request acceptance');
       }
     }
+    else if (payload.type === 'friend_request') {
+      console.log('New friend request received:', payload);
+      // Update pending friend requests count in real-time
+      setPendingFriendRequests(prev => prev + 1);
+    }
+    else if (payload.type === 'friend_request_processed') {
+      console.log('Friend request processed:', payload);
+      // Decrease pending friend requests count when request is processed
+      setPendingFriendRequests(prev => Math.max(0, prev - 1));
+    }
     else if (payload.type === 'chat') {
       const message = payload as Message;
       const contactId = message.isGroup 
@@ -366,156 +524,74 @@ const App: React.FC = () => {
 
       // Save incoming message to database (if it's not from the current user)
       if (contactId && message.senderId !== user?.id && user) {
-        // Check if sender is in our contacts list
-        const senderContact = contacts.find(c => c.id === message.senderId);
-        if (!senderContact && !AI_PERSONAS.some(ai => ai.id === message.senderId)) {
-          console.log('Received message from unknown contact, reloading contacts:', message.senderId);
-          loadContactsFromDatabase();
-        }
-        
-        try {
-          // Check if sender is an AI persona
-          const isAiSender = AI_PERSONAS.some(ai => ai.id === message.senderId);
-          
-          if (isAiSender) {
-            // Save AI message to database with new schema
-            await MessageService.saveMessage(message);
-            console.log('AI message from other user saved to database:', message.id);
-          } else {
-            // Regular user message
-            await MessageService.saveMessage(message);
-            console.log('Incoming message saved to database:', message.id);
-            
-            // Send delivery receipt to sender (if it's not from an AI)
-            const deliveryContact = contacts.find(c => c.id === message.senderId);
-            if (!deliveryContact?.isAi) {
-              const topic = message.isGroup 
-                ? `chat/${contactId}` 
-                : `chat/${[user.id, message.senderId].sort().join('-')}`;
-              
-              const deliveryReceipt: DeliveryReceipt = {
-                type: 'delivery_receipt',
-                contactId: contactId,
-                readerId: user.id,
-                messageIds: [message.id]
-              };
-              
-              // Send delivery confirmation
-              mqttService.publish(topic, deliveryReceipt);
-            }
+        // Update messages state immediately for instant UI feedback
+        setMessages(prev => {
+          const existingMessages = prev[contactId] || [];
+          // Check if message already exists to prevent duplicates
+          if (existingMessages.some(m => m.id === message.id)) {
+            return prev;
           }
-        } catch (error) {
-          console.error('Failed to save incoming message to database:', error);
-        }
-      }
+          return {
+            ...prev,
+            [contactId]: [...existingMessages, message].sort((a, b) => 
+              new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+            )
+          };
+        });
 
-      // Increment unread count if this chat is not active
-      if (user && message.senderId !== user.id && contactId && contactId !== selectedContactId) {
-        setUnreadCounts(prev => ({
+        // Update unread count if not currently viewing this chat
+        if (selectedContactId !== contactId) {
+          setUnreadCounts(prev => ({
             ...prev,
             [contactId]: (prev[contactId] || 0) + 1
-        }));
-      }
-
-      setMessages(prev => {
-        if (!contactId) return prev;
-
-        const contactMessages = prev[contactId] || [];
-        if (contactMessages.some(m => m.id === message.id)) {
-            return prev;
+          }));
         }
-        
-        const newMessages = [...contactMessages, message];
-        // When a message is received, mark my 'typing' status as stopped for this chat
-        setTypingIndicators(prevTyping => {
-            const newTyping = { ...prevTyping };
-            if (newTyping[contactId] && message.senderId) {
-                delete newTyping[contactId][message.senderId];
-            }
-            return newTyping;
-        });
 
-        return { ...prev, [contactId]: newMessages };
-      });
-    }
-    else if (payload.type === 'delivery_receipt') {
-        const { contactId, readerId, messageIds } = payload as DeliveryReceipt;
-        if (readerId === user?.id) return; // Don't process our own delivery receipts
+        // Save to database asynchronously
+        setTimeout(() => {
+          MessageService.saveMessage(message).catch(error =>
+            console.error('Failed to save incoming message:', error)
+          );
+        }, 0);
 
-        const contact = contacts.find(c => c.id === contactId);
-        const chatKey = contact?.isGroup ? contactId : readerId;
-
-        // Update message status to 'delivered' in local state and database
-        setMessages(prev => {
-            const contactMessages = prev[chatKey] || [];
-            if (!contactMessages.length) return prev;
-
-            let changed = false;
-            const updatedMessages = contactMessages.map(msg => {
-                if (msg.senderId === user?.id && 
-                    (!messageIds || messageIds.includes(msg.id)) && 
-                    msg.status === 'sent') {
-                    changed = true;
-                    // Update in database
-                    MessageService.updateMessageStatus(msg.id, 'delivered').catch(err => 
-                        console.error('Failed to update message status to delivered:', err)
-                    );
-                    return { ...msg, status: 'delivered' as const };
-                }
-                return msg;
-            });
-            
-            if (!changed) return prev;
-            return { ...prev, [chatKey]: updatedMessages };
-        });
-    }
-    else if (payload.type === 'read_receipt') {
-        const { contactId, readerId } = payload as ReadReceipt;
-        if (readerId === user?.id) return; // Don't process our own read receipts
-
-        const contact = contacts.find(c => c.id === contactId);
-        const chatKey = contact?.isGroup ? contactId : readerId;
-
-        setMessages(prev => {
-            const contactMessages = prev[chatKey] || [];
-            if (!contactMessages.length) return prev;
-
-            let changed = false;
-            const updatedMessages = contactMessages.map(msg => {
-                if (msg.senderId === user?.id && 
-                    (!payload.messageIds || payload.messageIds.includes(msg.id)) && 
-                    msg.status !== 'read') {
-                    changed = true;
-                    // Update in database
-                    MessageService.updateMessageStatus(msg.id, 'read').catch(err => 
-                        console.error('Failed to update message status to read:', err)
-                    );
-                    return { ...msg, status: 'read' as const };
-                }
-                return msg;
-            });
-            
-            if (!changed) return prev;
-            return { ...prev, [chatKey]: updatedMessages };
-        });
+        // Publish delivery receipt immediately
+        try {
+          const topic = message.isGroup 
+            ? `chat/${contactId}` 
+            : `chat/${[user.id, message.senderId].sort().join('-')}`;
+          
+          const deliveryReceipt: DeliveryReceipt = {
+            type: 'delivery_receipt',
+            contactId: contactId,
+            readerId: user.id,
+            messageIds: [message.id]
+          };
+          
+          mqttService.publish(topic, deliveryReceipt);
+          console.log('Published delivery receipt for message:', message.id);
+        } catch (error) {
+          console.error('Failed to publish delivery receipt:', error);
+        }
+      }
     }
     else if (payload.type === 'typing') {
         const { contactId, userId, userName, state } = payload as TypingIndicatorPayload;
         if (userId === user?.id) return; // Ignore our own typing events
 
+        // Determine if this is a group or direct chat based on contactId
         const contact = contacts.find(c => c.id === contactId);
-        const chatKey = contact?.isGroup ? contactId : userId;
+        const chatKey = contact?.isGroup ? contactId : userId; // DM threads are keyed by the other user's ID
 
         setTypingIndicators(prev => {
-            const newIndicators = { ...prev };
-            const chatIndicators = { ...(newIndicators[chatKey] || {}) };
-
+            const chatIndicators = { ...(prev[chatKey] || {}) };
+            
             if (state === 'start') {
                 chatIndicators[userId] = userName;
-            } else {
+            } else if (state === 'stop') {
                 delete chatIndicators[userId];
             }
             
+            const newIndicators = { ...prev };
             if (Object.keys(chatIndicators).length === 0) {
                 delete newIndicators[chatKey];
             } else {
@@ -571,8 +647,125 @@ const App: React.FC = () => {
             return { ...prev, [chatKey]: updatedMessages };
         });
     }
+    else if (payload.type === 'read_receipt') {
+        const { contactId, readerId, messageIds } = payload as ReadReceipt;
+        
+        // Skip if this is our own read receipt or if messageIds is missing
+        if (readerId === user?.id || !messageIds) return;
+        
+        console.log(`[Read Receipt] Received from ${readerId} for messages:`, messageIds);
+        
+        // Determine if this is a group receipt. If we can't find a matching group contact,
+        // treat it as a direct message receipt.
+        const isGroupReceipt = contacts.some(c => c.id === contactId && c.isGroup);
+        
+        if (isGroupReceipt) {
+            // Group: update by group contactId
+            setMessages(prev => {
+                const contactMessages = prev[contactId] || [];
+                const updatedMessages = contactMessages.map(msg => {
+                    if (messageIds.includes(msg.id)) {
+                        console.log(`[Message Status] Updating message ${msg.id} to read`);
+                        return { ...msg, status: 'read' as const };
+                    }
+                    return msg;
+                });
+                return { ...prev, [contactId]: updatedMessages };
+            });
+            setTimeout(() => { messageIds.forEach(id => MessageService.updateMessageStatus(id, 'read')); }, 0);
+        } else {
+            // Direct: key by the readerId (other participant)
+            const chatKey = readerId;
+            setMessages(prev => {
+                const dmMessages = prev[chatKey] || prev[contactId] || [];
+                const updated = dmMessages.map(msg => {
+                    if (messageIds.includes(msg.id)) {
+                        console.log(`[Message Status] DM updating message ${msg.id} to read`);
+                        return { ...msg, status: 'read' as const };
+                    }
+                    return msg;
+                });
+                return { ...prev, [chatKey]: updated };
+            });
+            setTimeout(() => { messageIds.forEach(id => MessageService.updateMessageStatus(id, 'read')); }, 0);
+        }
+    }
+    else if (payload.type === 'delivery_receipt') {
+        const { contactId, readerId, messageIds } = payload as DeliveryReceipt;
+        
+        // Skip if this is our own delivery receipt or if messageIds is missing
+        if (readerId === user?.id || !messageIds) return;
+        
+        console.log(`[Delivery Receipt] Received from ${readerId} for messages:`, messageIds);
+        
+        // Determine if this is a group receipt similar to read receipts
+        const isGroupReceipt = contacts.some(c => c.id === contactId && c.isGroup);
+        
+        if (isGroupReceipt) {
+            setMessages(prev => {
+                const contactMessages = prev[contactId] || [];
+                const updatedMessages = contactMessages.map(msg => {
+                    if (messageIds.includes(msg.id)) {
+                        console.log(`[Message Status] Updating message ${msg.id} to delivered`);
+                        return { ...msg, status: 'delivered' as const };
+                    }
+                    return msg;
+                });
+                return { ...prev, [contactId]: updatedMessages };
+            });
+            setTimeout(() => { messageIds.forEach(id => MessageService.updateMessageStatus(id, 'delivered')); }, 0);
+        } else {
+            // Direct: use readerId as the DM key
+            const chatKey = readerId;
+            setMessages(prev => {
+                const dmMessages = prev[chatKey] || prev[contactId] || [];
+                const updated = dmMessages.map(msg => {
+                    if (messageIds.includes(msg.id)) {
+                        console.log(`[Message Status] DM updating message ${msg.id} to delivered`);
+                        return { ...msg, status: 'delivered' as const };
+                    }
+                    return msg;
+                });
+                return { ...prev, [chatKey]: updated };
+            });
+            setTimeout(() => { messageIds.forEach(id => MessageService.updateMessageStatus(id, 'delivered')); }, 0);
+        }
+    }
   }, [contacts, setContacts, setMessages, user, setTypingIndicators, selectedContactId, setUnreadCounts]);
+
+  // Ensure outgoing messages never downgrade to queued while connected
+  useEffect(() => {
+    if (!user) return;
+    if (!mqttService.isConnected()) return;
+    // Promote any of our queued messages to sent when we are connected
+    setMessages(prev => {
+      let changed = false;
+      const updated: typeof prev = {} as any;
+      for (const [contactId, list] of Object.entries(prev)) {
+        const newList = list.map(m => {
+          if (m.senderId === user.id && (m.status === 'queued' || !m.status)) {
+            changed = true;
+            return { ...m, status: 'sent' as const };
+          }
+          return m;
+        });
+        updated[contactId] = newList as any;
+      }
+      return changed ? updated : prev;
+    });
+  }, [messages, user?.id]);
   
+  // Load pending friend requests count
+  const loadPendingFriendRequests = useCallback(async () => {
+    if (!user) return;
+    try {
+      const count = await FriendsService.getPendingFriendRequestsCount(user.id);
+      setPendingFriendRequests(count);
+    } catch (error) {
+      console.error('Error loading pending friend requests count:', error);
+    }
+  }, [user]);
+
   // Load unread messages received while user was offline or during reconnect (shared)
   const loadUnreadMessages = useCallback(async () => {
     if (!user) return;
@@ -603,37 +796,27 @@ const App: React.FC = () => {
     }
   }, [user, setMessages, setUnreadCounts]);
 
-  // Prime conversation list with latest messages for each contact on initial contacts load
-  useEffect(() => {
-    (async () => {
-      if (!user || contacts.length === 0) return;
-      try {
-        const latest = await MessageService.getLatestMessagesForContacts(user.id, contacts, 1);
-        const contactIds = Object.keys(latest);
-        if (contactIds.length === 0) return;
-        setMessages(prev => {
-          const next = { ...prev };
-          for (const cid of contactIds) {
-            const existing = next[cid] || [];
-            const incoming = latest[cid] || [];
-            const existingIds = new Set(existing.map(m => m.id));
-            const unique = incoming.filter(m => !existingIds.has(m.id));
-            if (unique.length > 0) {
-              next[cid] = [...existing, ...unique].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-            }
-          }
-          return next;
-        });
-      } catch (e) {
-        console.error('Failed to prime latest messages:', e);
-      }
-    })();
-  }, [user?.id, contacts.length]);
+
 
   // Connect once per user
   useEffect(() => {
     if (!user) return;
+    console.log('[MQTT] Connecting to MQTT service for user:', user.id);
     mqttService.connect(user);
+    
+    // Check connection status after a delay
+    const checkConnection = setTimeout(() => {
+      const isConnected = mqttService.isConnected();
+      const status = mqttService.getConnectionStatus();
+      console.log('[MQTT] Connection status after connect:', { isConnected, status });
+      
+      if (!isConnected) {
+        console.warn('[MQTT] Failed to connect, attempting reconnection...');
+        mqttService.checkConnection();
+      }
+    }, 2000);
+    
+    return () => clearTimeout(checkConnection);
   }, [user?.id]);
 
   // Attach payload listener
@@ -667,6 +850,10 @@ const App: React.FC = () => {
     contacts.forEach(contact => {
       const topic = contact.isGroup ? `chat/${contact.id}` : (contact.topicId || `chat/${[user.id, contact.id].sort().join('-')}`);
       topics.add(topic);
+      // Subscribe to user status updates for non-AI contacts
+      if (!contact.isAi) {
+        topics.add(`user/${contact.id}/status`);
+      }
     });
 
     // Subscribe to new topics
@@ -687,98 +874,18 @@ const App: React.FC = () => {
 
   const selectedContact = useSelectedContactWithLastSeen(selectedContactId, contacts);
 
-  const loadMessagesFromDatabase = useCallback(async (contactId: string, isGroup: boolean = false) => {
-    try {
-      console.log('Loading messages for contact:', contactId, 'isGroup:', isGroup);
-      const dbMessages = await MessageService.getMessages(contactId, isGroup);
-      console.log('Messages loaded from database:', dbMessages);
-      
-      setMessages(prev => ({
-        ...prev,
-        [contactId]: dbMessages
-      }));
-    } catch (error) {
-      console.error('Failed to load messages from database:', error);
-    }
-  }, [setMessages]);
-
-  const handleSelectContact = useCallback(async (contactId: string) => {
-    setSelectedContactId(contactId);
-    
-    // Load messages from database for this contact
-    const contact = contacts.find(c => c.id === contactId);
-    if (contact) {
-      await loadMessagesFromDatabase(contactId, contact.isGroup);
-    }
-    
-    // Send read receipts for unread messages and update their status in database
-    if (user && !contact?.isAi) {
-      const chatMessages = messages[contactId] || [];
-      const unreadMessages = chatMessages.filter(msg => 
-        msg.senderId !== user.id && msg.status !== 'read'
-      );
-      
-      if (unreadMessages.length > 0) {
-        // Update message statuses to 'read' in database
-        for (const msg of unreadMessages) {
-          try {
-            await MessageService.updateMessageStatus(msg.id, 'read');
-          } catch (error) {
-            console.error('Failed to update message status to read:', error);
-          }
-        }
-        
-        // Send read receipt via MQTT to notify sender
-        const topic = contact?.isGroup 
-          ? `chat/${contactId}` 
-          : `chat/${[user.id, contactId].sort().join('-')}`;
-        
-        const readReceipt: ReadReceipt = {
-          type: 'read_receipt',
-          contactId: contactId,
-          readerId: user.id,
-          messageIds: unreadMessages.map(m => m.id)
-        };
-        
-        mqttService.publish(topic, readReceipt);
-        
-        // Update local message statuses
-        setMessages(prev => {
-          const contactMessages = prev[contactId] || [];
-          const updatedMessages = contactMessages.map(msg =>
-            unreadMessages.some(unread => unread.id === msg.id) 
-              ? { ...msg, status: 'read' as const }
-              : msg
-          );
-          return { ...prev, [contactId]: updatedMessages };
-        });
-      }
-    }
-    
-    // Find the first unread message before clearing the count
-    const unreadCount = unreadCounts[contactId];
-    if (unreadCount > 0) {
-        const chatMessages = messages[contactId] || [];
-        const firstUnreadIndex = chatMessages.length - unreadCount;
-        if (firstUnreadIndex >= 0 && chatMessages[firstUnreadIndex]) {
-            setFirstUnreadMessageId(chatMessages[firstUnreadIndex].id);
-        } else {
-             setFirstUnreadMessageId(null);
-        }
-    } else {
-        setFirstUnreadMessageId(null); // Clear if there are no unread messages
-    }
-
-    // Clear unread count for this contact
-    setUnreadCounts(prev => {
-      if (!prev[contactId]) {
-        return prev; // No change needed
-      }
-      const newCounts = { ...prev };
-      delete newCounts[contactId];
-      return newCounts;
-    });
-  }, [setUnreadCounts, unreadCounts, messages, contacts, loadMessagesFromDatabase]);
+  // Import the optimized contact selection hook
+  const { handleSelectContact } = useOptimizedContactSelection({
+    user,
+    contacts,
+    messages,
+    unreadCounts,
+    setSelectedContactId,
+    setMessages,
+    setUnreadCounts,
+    setFirstUnreadMessageId,
+    setUiAiStream,
+  });
 
   const triggerAiResponse = useCallback(async (aiContact: Contact, userMessage: Message, groupContext?: { group: Contact }) => {
     setIsLoading(true); // Maybe use a more granular loading state in the future
@@ -787,7 +894,7 @@ const App: React.FC = () => {
         type: 'chat',
         id: aiMessageId,
         contactId: userMessage.contactId, // group ID or direct chat ID
-        text: '',
+      text: '',
         senderId: aiContact.id,
         senderName: aiContact.name,
         timestamp: new Date(),
@@ -809,41 +916,85 @@ const App: React.FC = () => {
     }
 
     try {
-        const stream = await sendMessageToBot(aiContact, messageForBot);
+        const rawStream = await sendMessageToBot(aiContact, messageForBot);
 
-        if (!groupContext) { // Mark as delivered only in 1-on-1 chats
-            setMessages(prev => {
-                const contactMessages = prev[aiContact.id] || [];
-                const updatedMessages = contactMessages.map(msg =>
-                    msg.id === userMessage.id ? { ...msg, status: 'delivered' as const } : msg
-                );
-                return { ...prev, [aiContact.id]: updatedMessages };
-            });
-        }
+        // Collect full response first (showing shimmer in UI), then typewriter the final text
+        let collected = '';
 
-        let fullResponse = '';
-        for await (const chunk of stream) {
-            fullResponse += chunk.text;
-            setMessages(prev => {
-                const currentMessages = prev[userMessage.contactId] || [];
-                const updatedMessages = currentMessages.map(msg =>
-                    msg.id === aiMessageId ? { ...msg, text: fullResponse, timestamp: new Date() } : msg
-                );
-                return { ...prev, [userMessage.contactId]: updatedMessages };
-            });
+        // Mark user message as delivered when AI starts responding
+        setMessages(prev => {
+            const contactMessages = prev[userMessage.contactId] || [];
+            const updatedMessages = contactMessages.map(msg =>
+                msg.id === userMessage.id ? { ...msg, status: 'delivered' as const } : msg
+            );
+            return { ...prev, [userMessage.contactId]: updatedMessages };
+        });
+
+        // Accumulate across chunks and emit only parsed text segments
+        let leftover = '';
+        // Append helper
+        const pushCollected = (txt: string) => { if (!txt) return; collected += txt; };
+        for await (const chunk of rawStream as any) {
+          // Case 1: SDK object chunk
+          if (chunk && typeof chunk === 'object') {
+            try {
+              const parts = chunk?.candidates?.[0]?.content?.parts;
+              if (Array.isArray(parts)) {
+                const piece = parts.map((p: any) => p?.text || '').join('');
+                if (piece) { pushCollected(piece); continue; }
+              }
+              const piece = (chunk?.text ?? '') as string;
+              if (piece) { pushCollected(piece); continue; }
+            } catch {}
+          }
+          // Case 2: SSE string chunk
+          const raw = (typeof chunk === 'string') ? chunk : '';
+          if (raw) {
+            leftover += raw;
+            let sepIndex: number;
+            while ((sepIndex = leftover.indexOf('\n\n')) !== -1) {
+              const eventBlock = leftover.slice(0, sepIndex);
+              leftover = leftover.slice(sepIndex + 2);
+              const lines = eventBlock.split('\n');
+              for (const line of lines) {
+                const m = line.match(/^data:\s*(.*)$/);
+                if (!m) continue;
+                const payload = m[1];
+                if (payload === '[DONE]' || payload === '') continue;
+                try {
+                  const obj = JSON.parse(payload);
+                  const text = obj?.candidates?.[0]?.content?.parts?.map((p: any) => p?.text || '').join('') || '';
+                  if (text) pushCollected(text);
+                } catch {
+                  pushCollected(payload);
+                }
+              }
+            }
+          }
         }
+        // Flush remaining SSE payload if present
+        if (leftover) {
+          const lm = leftover.match(/data:\s*(.*)$/m);
+          if (lm && lm[1] && lm[1] !== '[DONE]') {
+            try {
+              const obj = JSON.parse(lm[1]);
+              const text = obj?.candidates?.[0]?.content?.parts?.map((p: any) => p?.text || '').join('') || '';
+              if (text) pushCollected(text);
+            } catch {}
+          }
+        }
+        const fullResponse = collected;
 
         // Save the final AI response to database and broadcast to other users
         if (fullResponse.trim()) {
             try {
                 const finalAiMessage: Message = {
-                    type: 'chat',
                     id: aiMessageId,
                     contactId: userMessage.contactId,
                     text: fullResponse.trim(),
                     senderId: aiContact.id,
                     senderName: aiContact.name,
-                    timestamp: new Date(),
+                    timestamp: new Date().toISOString(),
                     isGroup: !!groupContext,
                 };
                 
@@ -851,12 +1002,56 @@ const App: React.FC = () => {
                 await MessageService.saveMessage(finalAiMessage);
                 console.log('AI response saved to database:', aiMessageId);
                 
+                // Mark the original user message as read since AI has responded
+                try {
+                    await MessageService.markMessageAsRead(userMessage.id);
+                    console.log('User message marked as read after AI response:', userMessage.id);
+                    
+                    // Send read receipt via MQTT for the user's message
+                    if (user) {
+                        const readReceipt = {
+                            type: 'read_receipt',
+                            messageId: userMessage.id,
+                            readerId: aiContact.id, // AI is acknowledging the read
+                            timestamp: new Date().toISOString()
+                        };
+                        
+                        const topic = groupContext ? `chat/${userMessage.contactId}` : `user/${user.id}/receipts`;
+                        mqttService.publish(topic, readReceipt);
+                        console.log('Read receipt sent via MQTT for user message to AI');
+                    }
+                } catch (error) {
+                    console.error('Error marking user message as read:', error);
+                }
+                
                 // Broadcast to other users via MQTT for group chats
                 if (groupContext && user) {
                     const topic = `chat/${userMessage.contactId}`;
                     mqttService.publish(topic, finalAiMessage);
                     console.log('AI group response broadcasted via MQTT');
                 }
+                
+                // Update the message in state with the final text and mark user message as read
+                setMessages(prev => {
+                    const currentMessages = prev[userMessage.contactId] || [];
+                    const updatedMessages = currentMessages.map(msg => {
+                        if (msg.id === aiMessageId) {
+                            return { ...msg, text: finalAiMessage.text };
+                        } else if (msg.id === userMessage.id) {
+                            return { ...msg, status: 'read' as const };
+                        }
+                        return msg;
+                    });
+                    return { ...prev, [userMessage.contactId]: updatedMessages };
+                });
+                // Kick off typewriter stream in UI after full text is known
+                console.log('🚀 Setting UI AI Stream:', { 
+                    contactId: userMessage.contactId, 
+                    messageId: aiMessageId, 
+                    textLength: finalAiMessage.text?.length || 0,
+                    textPreview: finalAiMessage.text?.substring(0, 50) + '...'
+                });
+                setUiAiStream({ contactId: userMessage.contactId, messageId: aiMessageId, text: finalAiMessage.text });
             } catch (error) {
                 console.error('Failed to save AI response to database:', error);
             }
@@ -872,25 +1067,55 @@ const App: React.FC = () => {
         });
     } finally {
         setIsLoading(false);
-        if (!groupContext) { // Mark as read only in 1-on-1 chats
-             setMessages(prev => {
-                const contactMessages = prev[aiContact.id] || [];
+        // Calculate dynamic delay based on response length for streaming
+        const responseLength = finalAiMessage.text?.length || 0;
+        const streamingDelay = Math.min(Math.max(responseLength * 15 + 1000, 2000), 10000); // 15ms per char + 1s buffer, min 2s, max 10s
+        
+        console.log('🔄 Delaying UI AI Stream clear to allow streaming', { responseLength, delay: streamingDelay });
+        setTimeout(() => {
+            console.log('🔄 Clearing UI AI Stream after delay');
+            setUiAiStream(null);
+            
+            // Mark user message as read ONLY after AI response streaming is complete
+            console.log('📖 Marking user message as read after AI response completion');
+            setMessages(prev => {
+                const contactMessages = prev[userMessage.contactId] || [];
                 const updatedMessages = contactMessages.map(msg =>
                     msg.id === userMessage.id ? { ...msg, status: 'read' as const } : msg
                 );
-                return { ...prev, [aiContact.id]: updatedMessages };
+                return { ...prev, [userMessage.contactId]: updatedMessages };
             });
-        }
+        }, streamingDelay);
     }
   }, [setMessages, setIsLoading]);
 
-  const handleSendMessage = useCallback(async (text: string, attachment?: Attachment, replyInfo?: { replyTo: Message['replyTo'] }) => {
+  const handleSendMessage = useCallback(async (text: string, attachment?: Attachment, replyInfo?: { replyTo: Message['replyTo'] }, additionalAttachments?: Attachment[]) => {
     if (!selectedContact || isLoading || !user) return;
 
     let attachmentForMessage: Message['attachment'] | undefined;
+    let attachmentsForMessage: Message['attachments'] | undefined;
 
+    // Handle primary attachment (backward compatibility)
     if (attachment?.file) {
-      attachmentForMessage = { type: 'image', url: attachment.url };
+      attachmentForMessage = { 
+        type: attachment.type, 
+        url: attachment.url,
+        fileName: attachment.fileName,
+        fileSize: attachment.fileSize,
+        mimeType: attachment.mimeType
+      };
+    }
+
+    // Handle additional attachments (for multiple files)
+    if (additionalAttachments && additionalAttachments.length > 0) {
+      attachmentsForMessage = additionalAttachments.map(att => ({
+        type: att.type,
+        url: att.url,
+        fileName: att.fileName,
+        fileSize: att.fileSize,
+        mimeType: att.mimeType,
+        file: att.file
+      }));
     }
 
     const userMessage: Message = {
@@ -903,7 +1128,8 @@ const App: React.FC = () => {
       timestamp: new Date(),
       status: mqttService.isConnected() ? 'sent' : 'queued',
       isGroup: !!selectedContact.isGroup,
-      ...(attachmentForMessage && { attachment: attachmentForMessage }),
+      ...(attachmentForMessage && { attachment: { ...attachmentForMessage, file: attachment?.file } }),
+      ...(attachmentsForMessage && { attachments: attachmentsForMessage }),
       ...(replyInfo && { replyTo: replyInfo.replyTo })
     };
 
@@ -916,21 +1142,32 @@ const App: React.FC = () => {
       ],
     }));
 
-    // Save message to database (for both AI and non-AI contacts)
-    try {
-      if (attachment?.file) {
-        // If there's a file attachment, use the special method
-        await MessageService.saveMessageWithAttachment(userMessage, attachment.file);
-      } else {
-        // Otherwise use the regular save method
+          // Save message to database (for both AI and non-AI contacts)
+      try {
+        // Always use saveMessage since attachments are already uploaded and in the message object
         await MessageService.saveMessage(userMessage);
-      }
       
       console.log('Message saved to database:', userMessage.id);
       
-      // Update status in database after successful save
-      const finalStatus = mqttService.isConnected() ? 'sent' : 'queued';
-      await MessageService.updateMessageStatus(userMessage.id, finalStatus);
+      // Update status in database after successful save (mirror optimistic rule)
+      const shouldOptimisticallyDeliver = selectedContact.isGroup
+        ? (selectedContact.memberIds || []).some(id => id !== user.id && !AI_PERSONAS.some(ai => ai.id === id))
+        : true;
+      const dbStatus = mqttService.isConnected() && shouldOptimisticallyDeliver
+        ? ('delivered' as const)
+        : (mqttService.isConnected() ? ('sent' as const) : ('queued' as const));
+      await MessageService.updateMessageStatus(userMessage.id, dbStatus);
+
+      // Reflect latest DB status in UI immediately (avoid waiting for receipts)
+      setMessages(prev => {
+        const contactMessages = prev[selectedContact.id] || [];
+        const updatedMessages = contactMessages.map(msg =>
+          msg.id === userMessage.id && (msg.status === 'queued' || !msg.status)
+            ? { ...msg, status: dbStatus }
+            : msg
+        );
+        return { ...prev, [selectedContact.id]: updatedMessages };
+      });
     } catch (error) {
       console.error('Failed to save message to database:', error);
     }
@@ -944,24 +1181,63 @@ const App: React.FC = () => {
         
         mqttService.publish(topic, userMessage);
         
+        // Optimistic UI: mark as delivered if there is at least one other online human member in group,
+        // or in direct chat assume delivery after publish
         setMessages(prev => {
             const contactMessages = prev[selectedContact.id] || [];
+            const shouldOptimisticallyDeliver = selectedContact.isGroup
+              ? (selectedContact.memberIds || []).some(id => id !== user.id && !AI_PERSONAS.some(ai => ai.id === id))
+              : true;
             const updatedMessages = contactMessages.map(msg =>
-                msg.id === userMessage.id ? { ...msg, status: 'delivered' as const } : msg
+                msg.id === userMessage.id
+                  ? { ...msg, status: shouldOptimisticallyDeliver ? ('delivered' as const) : ('sent' as const) }
+                  : msg
             );
+            
+            const newStatus = shouldOptimisticallyDeliver ? 'delivered' : 'sent';
+            console.log(`[Message Status] Message ${userMessage.id} status updated to: ${newStatus} (optimistic)`);
+            
             return { ...prev, [selectedContact.id]: updatedMessages };
         });
 
-        // Check for AI mentions in a group chat
+        // Check for AI mentions in a group chat - anywhere in the message
         if (selectedContact.isGroup) {
             const groupMembers = selectedContact.memberIds || [];
             AI_PERSONAS.forEach(aiPersona => {
                 if (groupMembers.includes(aiPersona.id)) {
-                    const mentionTag = `@${aiPersona.name}`;
-                    if (userMessage.text.includes(mentionTag)) {
+                    // Check for different variations of the mention tag
+                    const mentionVariations = [
+                        `@${aiPersona.name}`,
+                        `@${aiPersona.name.toLowerCase()}`,
+                        `@${aiPersona.name.toUpperCase()}`,
+                        `@${aiPersona.name.replace(/\s+/g, '')}`, // Remove spaces
+                        `@${aiPersona.name.replace(/\s+/g, '-')}`, // Replace spaces with hyphens
+                    ];
+                    
+                    const foundMention = mentionVariations.find(mention => 
+                        userMessage.text.toLowerCase().includes(mention.toLowerCase())
+                    );
+                    
+                    if (foundMention) {
+                        console.log(`AI mention detected: ${foundMention} in message: "${userMessage.text}"`);
+                        
+                        // Send the entire message to AI, but remove the mention tag for cleaner context
                         const messageForBot = { ...userMessage };
-                        messageForBot.text = messageForBot.text.replace(mentionTag, '').trim();
-                        triggerAiResponse(aiPersona, messageForBot, { group: selectedContact });
+                        
+                        // Remove the found mention variation (case-insensitive)
+                        const regex = new RegExp(foundMention.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+                        messageForBot.text = messageForBot.text.replace(regex, '').trim();
+                        
+                        console.log(`Sending to AI "${aiPersona.name}": "${messageForBot.text}"`);
+                        
+                        // Ensure we don't send empty messages
+                        if (messageForBot.text.trim()) {
+                            triggerAiResponse(aiPersona, messageForBot, { group: selectedContact });
+                        } else {
+                            // If message is empty after removing mention, send a default prompt
+                            messageForBot.text = "Please help me with this.";
+                            triggerAiResponse(aiPersona, messageForBot, { group: selectedContact });
+                        }
                     }
                 }
             });
@@ -1250,8 +1526,8 @@ const App: React.FC = () => {
       mqttService.disconnect();
       
       // Clear local storage data (keeping theme, sidebarWidth, and user session data)
-      localStorage.removeItem('userProfile'); // Clear user profile as well
-      localStorage.removeItem('user'); // Make sure to clear the 'user' item too
+              // Clear any remaining auth data
+        console.log('Clearing auth data on logout');
       
       // Properly log out using Supabase auth
       await logout();
@@ -1296,35 +1572,21 @@ const App: React.FC = () => {
     return bLast - aLast;
   });
 
-  return (
-   
-<>
-  <div className="h-screen w-screen flex flex-col font-sans antialiased text-slate-800 dark:text-slate-200 overflow-hidden">    <ResizablePanelGroup
-      direction="horizontal"
-      className="flex-1 h-full md:min-w-[450px] overflow-hidden"
-    >
-      {/* Sidebar Panel */}
-      <ResizablePanel
-        defaultSize={Math.round(((sidebarWidth ?? DEFAULT_SIDEBAR_WIDTH) / window.innerWidth) * 100)}
-        minSize={16}
-        maxSize={25}
-        onResize={(sizes: number | number[]) => {
-          // Only update localStorage if user actually resizes
-          let percent: number;
-          if (Array.isArray(sizes)) {
-            percent = sizes[0];
-          } else {
-            percent = sizes;
-          }
-          const newWidth = Math.round((percent / 100) * window.innerWidth);
-          if (!isNaN(newWidth) && newWidth > 0 && newWidth !== sidebarWidth) {
-            setSidebarWidth(newWidth);
-          }
-        }}
-        className="h-full overflow-hidden"
+
+    return (
+    <div className="h-[100dvh] overflow-hidden">{/* Mobile Layout (Motion / motion.dev slide in/out) */}
+        <div className="md:hidden relative w-full h-[100dvh] overflow-hidden m-0 p-0">
+  <AnimatePresence initial={false} mode="wait">
+    {!selectedContact ? (
+      <motion.div
+        key="mobile-sidebar"
+        initial={{ x: 0 }}
+        animate={{ x: 0 }}
+        exit={{ x: "-100%" }}
+        transition={{ type: "spring", stiffness: 320, damping: 28 }}
+        className="absolute inset-0 w-full h-full z-20"
       >
-        <Sidebar
-          theme={theme}
+        <MobileSidebar
           contacts={sortedContacts}
           messages={messages}
           unreadCounts={unreadCounts}
@@ -1335,35 +1597,106 @@ const App: React.FC = () => {
           onSettings={() => setSettingsOpen(true)}
           onLogout={handleLogout}
           onTogglePin={handleTogglePinContact}
-          onInviteUser={() => setInviteModalOpen(true)}
           onFriendRequests={() => setFriendRequestsOpen(true)}
           typingIndicators={typingIndicators}
           pendingFriendRequestsCount={pendingFriendRequests}
-          style={{ width: `${sidebarWidth}px`, minWidth: `${sidebarWidth}px`, maxWidth: `${sidebarWidth}px` }}
+          onClose={() => {
+            // Handle mobile sidebar close
+          }}
         />
-      </ResizablePanel>
-{/* Stylized Resizable Handle */}
-<div className="relative group h-full">
-  <ResizableHandle
-    withHandle
-    className={cn(
-      "opacity-0 group-hover:opacity-100 transition-opacity ease-in-out delay-200", // smooth delayed fade
-      "absolute top-0 bottom-0 left-1/2 -translate-x-1/2 z-10",
-      // Track style
-      "bg-transparent group-hover:bg-border dark:group-hover:bg-foreground/25",
-      // Hit area for easier grabbing
-      "before:absolute before:inset-y-0 before:-left-2 before:w-5 before:cursor-col-resize"
+      </motion.div>
+    ) : (
+      <motion.div
+        key="mobile-chat"
+        initial={{ x: "100%" }}
+        animate={{ x: 0 }}
+        exit={{ x: "100%" }}
+        transition={{ type: "spring", stiffness: 320, damping: 28 }}
+        className="absolute inset-0 w-full h-full z-30"
+      >
+        <ChatView
+          contact={selectedContact}
+          currentUser={user}
+          aiStream={
+            selectedContact &&
+            uiAiStream &&
+            uiAiStream.contactId === selectedContact.id
+              ? {
+                  messageId: uiAiStream.messageId,
+                  stream: uiAiStream.stream,
+                  text: uiAiStream.text,
+                }
+              : null
+          }
+          contacts={contacts}
+          messages={selectedContact ? messages[selectedContact.id] || [] : []}
+          isLoading={isLoading}
+          typingIndicators={
+            selectedContact ? typingIndicators[selectedContact.id] || {} : {}
+          }
+          onSendMessage={handleSendMessage}
+          onImageClick={setLightboxImage}
+          onEditGroup={setEditingGroup}
+          onReact={handleReactToMessage}
+          onForward={setForwardingMessage}
+          onNewGroup={() => setNewGroupOpen(true)}
+          onInviteUser={() => setInviteModalOpen(true)}
+          onAddAiContact={handleAddAiContact}
+          aiPersonas={AI_PERSONAS}
+          firstUnreadMessageId={firstUnreadMessageId}
+          setFirstUnreadMessageId={setFirstUnreadMessageId}
+          onBack={() => setSelectedContactId(null)}
+          onLoadOlder={(contactId, merged) => {
+            setMessages(prev => ({ ...prev, [contactId]: merged }));
+          }}
+        />
+      </motion.div>
     )}
-  />
+  </AnimatePresence>
 </div>
 
-
-      {/* Chat View Panel */}
-      <ResizablePanel defaultSize={75} className="h-full overflow-hidden">
-        <main className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
+      {/* Desktop Layout */}
+              <div className="hidden md:flex h-[100dvh] overflow-hidden">
+        <SidebarProvider
+          style={{ "--sidebar-width": `${sidebarWidth}px` } as React.CSSProperties}
+        >
+        <AppSidebar
+          contacts={sortedContacts}
+          messages={messages}
+          unreadCounts={unreadCounts}
+          selectedContactId={selectedContactId}
+          onSelectContact={handleSelectContact}
+          user={user}
+          onNewGroup={() => setNewChatOpen(true)}
+          onSettings={() => setSettingsOpen(true)}
+          onLogout={handleLogout}
+          onTogglePin={handleTogglePinContact}
+          onFriendRequests={() => setFriendRequestsOpen(true)}
+          typingIndicators={typingIndicators}
+          pendingFriendRequestsCount={pendingFriendRequests}
+          isLoading={isContactsLoading}
+          error={contactsError}
+          onRetry={loadContactsFromDatabase}
+          onClose={() => {
+            // Handled by sidebar's built-in close functionality
+          }}
+        />
+  
+                  <SidebarInset className="shadow-lg flex flex-1 overflow-hidden m-0 p-0 min-h-0">
           <ChatView
             contact={selectedContact || undefined}
             currentUser={user}
+            aiStream={
+              selectedContact &&
+              uiAiStream &&
+              uiAiStream.contactId === selectedContact.id
+                ? {
+                    messageId: uiAiStream.messageId,
+                    stream: uiAiStream.stream,
+                    text: uiAiStream.text,
+                  }
+                : null
+            }
             contacts={contacts}
             messages={selectedContact ? messages[selectedContact.id] || [] : []}
             isLoading={isLoading}
@@ -1380,65 +1713,75 @@ const App: React.FC = () => {
             onAddAiContact={handleAddAiContact}
             aiPersonas={AI_PERSONAS}
             firstUnreadMessageId={firstUnreadMessageId}
-            className="flex flex-col h-full min-h-0"
+            setFirstUnreadMessageId={setFirstUnreadMessageId}
+            onLoadOlder={(contactId, merged) => {
+              setMessages(prev => ({ ...prev, [contactId]: merged }));
+            }}
           />
-        </main>
-      </ResizablePanel>
-    </ResizablePanelGroup>
-  </div>
+        </SidebarInset>
+        </SidebarProvider>
+      </div>
+  
+      {/* Modals */}
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        user={user}
+        onUserUpdate={setUser}
+        aiPersonas={AI_PERSONAS}
+        contacts={contacts}
+        onToggleAiContact={handleToggleAiContact}
+      />
+  
+      <NewChatDialog
+        isOpen={isNewChatOpen}
+        onClose={() => setNewChatOpen(false)}
+        currentUser={user!}
+        contacts={contacts}
+        aiPersonas={AI_PERSONAS}
+        onCreateGroup={handleCreateGroup}
+      />
+  
+      <EditGroupModal
+        isOpen={!!editingGroup}
+        onClose={() => setEditingGroup(null)}
+        group={editingGroup}
+        contacts={contacts.filter((c) => !c.isGroup && !c.isAi)}
+        aiPersonas={AI_PERSONAS}
+        onUpdateGroup={handleUpdateGroup}
+      />
+  
+      <InviteUserModal
+        isOpen={isInviteModalOpen}
+        onClose={() => setInviteModalOpen(false)}
+        currentUser={user!}
+      />
+  
+      <FriendRequestsModal
+        isOpen={isFriendRequestsOpen}
+        onClose={() => setFriendRequestsOpen(false)}
+        currentUser={user!}
+        onRequestAccepted={handleFriendRequestAccepted}
+      />
+  
+      <ForwardMessageModal
+        isOpen={!!forwardingMessage}
+        onClose={() => setForwardingMessage(null)}
+        contacts={contacts}
+        onForward={handleForwardMessage}
+        currentUser={user}
+        message={forwardingMessage || undefined}
+      />
+  
+      {lightboxImage && (
+        <Lightbox src={lightboxImage} onClose={() => setLightboxImage(null)} />
+      )}
+  
+      {/* Vercel Analytics */}
+      <Analytics />
 
-  {/* Modals */}
-  <SettingsModal
-    isOpen={isSettingsOpen}
-    onClose={() => setSettingsOpen(false)}
-    user={user}
-    onUserUpdate={setUser}
-    theme={theme}
-    onThemeChange={setTheme}
-    aiPersonas={AI_PERSONAS}
-    contacts={contacts}
-    onToggleAiContact={handleToggleAiContact}
-  />
-  <NewChatDialog
-    isOpen={isNewChatOpen}
-    onClose={() => setNewChatOpen(false)}
-    currentUser={user!}
-    contacts={contacts}
-    aiPersonas={AI_PERSONAS}
-    onCreateGroup={handleCreateGroup}
-  />
-  <EditGroupModal
-    isOpen={!!editingGroup}
-    onClose={() => setEditingGroup(null)}
-    group={editingGroup}
-    contacts={contacts.filter((c) => !c.isGroup && !c.isAi)}
-    aiPersonas={AI_PERSONAS}
-    onUpdateGroup={handleUpdateGroup}
-  />
-  <InviteUserModal
-    isOpen={isInviteModalOpen}
-    onClose={() => setInviteModalOpen(false)}
-    currentUser={user!}
-  />
-  <FriendRequestsModal
-    isOpen={isFriendRequestsOpen}
-    onClose={() => setFriendRequestsOpen(false)}
-    currentUser={user!}
-    onRequestAccepted={handleFriendRequestAccepted}
-  />
-  <ForwardMessageModal
-    isOpen={!!forwardingMessage}
-    onClose={() => setForwardingMessage(null)}
-    contacts={contacts}
-    onForward={handleForwardMessage}
-    currentUser={user}
-    message={forwardingMessage || undefined}
-  />
-  {lightboxImage && (
-    <Lightbox src={lightboxImage} onClose={() => setLightboxImage(null)} />
-  )}
-</>
+    </div>
   );
-};
+}
 
 export default App;

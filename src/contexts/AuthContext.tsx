@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { DatabaseService } from '@/services/databaseService';
+import { authCookies } from '@/lib/cookies';
 
 interface User {
   id: string;
@@ -45,6 +46,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       try {
         setLoading(true);
         
+        // Clear only old auth tokens (migration cleanup)
+        try {
+          localStorage.removeItem('sb-jflwqmripnynruyztusb-auth-token');
+          localStorage.removeItem('gemini-messenger-auth');
+        } catch {}
+        
         // Check for Supabase session
         const supabase = createClient();
         const { data: { session }, error } = await supabase.auth.getSession();
@@ -72,7 +79,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             };
             
             setUser(userData);
-            localStorage.setItem('user', JSON.stringify(userData));
+            authCookies.setUserData(userData);
           } else {
             // User exists in Supabase but not in our database
             // Create user in database
@@ -96,22 +103,22 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
                 };
                 
                 setUser(userData);
-                localStorage.setItem('user', JSON.stringify(userData));
+                authCookies.setUserData(userData);
               }
             } catch (dbError) {
               console.error('Failed to create user in database:', dbError);
             }
           }
         } else {
-          // No Supabase session, check localStorage as fallback
-          const savedUser = localStorage.getItem('user');
+          // No Supabase session, check cookies as fallback
+          const savedUser = authCookies.getUserData();
           if (savedUser) {
-            setUser(JSON.parse(savedUser));
+            setUser(savedUser);
           }
         }
       } catch (error) {
         console.error('Auth check failed:', error);
-        localStorage.removeItem('user');
+        authCookies.removeUserData();
       } finally {
         setLoading(false);
       }
@@ -148,7 +155,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           };
           
           setUser(userData);
-          localStorage.setItem('user', JSON.stringify(userData));
+          authCookies.setUserData(userData);
         } else {
           // User exists in Supabase but not in our database
           // Create user in database
@@ -169,7 +176,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
               };
               
               setUser(userData);
-              localStorage.setItem('user', JSON.stringify(userData));
+              authCookies.setUserData(userData);
             }
           } catch (dbError) {
             console.error('Failed to create user in database:', dbError);
@@ -228,7 +235,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             };
             
             setUser(userData);
-            localStorage.setItem('user', JSON.stringify(userData));
+            authCookies.setUserData(userData);
             console.log('User registered successfully:', userData);
           }
         } catch (dbError) {
@@ -261,16 +268,22 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         console.log('Supabase signOut successful');
       }
       
+      // Clear only old auth tokens (migration cleanup)
+      try {
+        localStorage.removeItem('sb-jflwqmripnynruyztusb-auth-token');
+        localStorage.removeItem('gemini-messenger-auth');
+      } catch {}
+      
       // Clear local state
       setUser(null);
-      localStorage.removeItem('user');
+      authCookies.clearAll();
       
       return true;
     } catch (error) {
       console.error('Exception during logout:', error);
       // Still clear local state even if Supabase logout fails
       setUser(null);
-      localStorage.removeItem('user');
+      authCookies.clearAll();
       return false;
     }
   };
@@ -308,7 +321,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           };
           
           setUser(userData);
-          localStorage.setItem('user', JSON.stringify(userData));
+          authCookies.setUserData(userData);
           console.log('User session refreshed successfully:', userData);
         } else {
           // User exists in Supabase but not in our database
@@ -333,7 +346,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
               };
               
               setUser(userData);
-              localStorage.setItem('user', JSON.stringify(userData));
+              authCookies.setUserData(userData);
               console.log('New user created during refresh:', userData);
             }
           } catch (dbError) {

@@ -11,12 +11,14 @@ interface GeneratedAvatarProps {
   aiPersonas?: Contact[];
   currentUser: User;
   className?: string;
+  showOnlineStatus?: boolean;
+  onlineStatus?: 'online' | 'offline' | 'away';
 }
 
 
 
 
-const GeneratedAvatar: React.FC<GeneratedAvatarProps> = ({ name, isGroup, memberIds, creatorId, allContacts, aiPersonas = [], currentUser, className }) => {
+const GeneratedAvatar: React.FC<GeneratedAvatarProps> = ({ name, isGroup, memberIds, creatorId, allContacts, aiPersonas = [], currentUser, className, showOnlineStatus = false, onlineStatus = 'offline' }) => {
   // For group avatars, show a grid of member avatars (up to 4)
   if (isGroup) {
     let displayMembers: Contact[] = [];
@@ -53,7 +55,7 @@ const GeneratedAvatar: React.FC<GeneratedAvatarProps> = ({ name, isGroup, member
     else if (memberCount <= 9) gridClass = "grid-cols-3 grid-rows-3";
     else gridClass = "grid-cols-4 grid-rows-4";
     return (
-      <div className={`w-12 h-12 grid ${gridClass} gap-px bg-slate-200 dark:bg-slate-700 rounded-md overflow-hidden flex-shrink-0 ${className}`}>
+      <div className={`w-10 h-10 grid ${gridClass} gap-px bg-slate-200 dark:bg-slate-700 rounded-md overflow-hidden flex-shrink-0 ${className}`}>
         {displayMembers.map((member) => (
           <Avatar key={member.id} className="rounded-none w-full h-full">
             {member.avatarUrl ? (
@@ -73,22 +75,41 @@ const GeneratedAvatar: React.FC<GeneratedAvatarProps> = ({ name, isGroup, member
 
   // Single avatar (contact or user)
   let avatarUrl = "";
+  let contactStatus: 'online' | 'offline' | 'away' = 'offline';
   const allSources = [...allContacts, ...aiPersonas];
-  if (allSources.length > 0) {
-    const contact = allSources.find(c => c.name === name);
-    if (contact && contact.avatarUrl) avatarUrl = contact.avatarUrl;
+  
+  // Find the contact to get real status
+  const contact = allSources.find(c => c.name === name);
+  if (contact) {
+    if (contact.avatarUrl) avatarUrl = contact.avatarUrl;
+    // Use real status from contact if available
+    if (contact.status) contactStatus = contact.status;
   }
+  
   if (!avatarUrl && currentUser && currentUser.name === name && currentUser.avatarUrl) {
     avatarUrl = currentUser.avatarUrl;
+    // Use current user's status
+    if (currentUser.status) contactStatus = currentUser.status;
   }
+  
+  // For AI contacts, always show as online
+  if (contact?.isAi) {
+    contactStatus = 'online';
+  }
+  
   return (
-    <Avatar className={`rounded-md w-12 h-12 ${className}`}>
-      {avatarUrl ? (
-        <AvatarImage src={avatarUrl} alt={name} />
-      ) : (
-        <AvatarFallback className='rounded-md w-12 h-12 text-lg font-extrabold'>{name.charAt(0).toUpperCase()}</AvatarFallback>
+    <div className="relative">
+      <Avatar className={`rounded-md w-12 h-12 ${className}`}>
+        {avatarUrl ? (
+          <AvatarImage src={avatarUrl} alt={name} />
+        ) : (
+          <AvatarFallback className='rounded-md w-12 h-12 text-lg font-extrabold'>{name.charAt(0).toUpperCase()}</AvatarFallback>
+        )}
+      </Avatar>
+      {showOnlineStatus && (
+        <div className={`${contactStatus === 'online' ? 'online-indicator' : contactStatus === 'away' ? 'away-indicator' : 'offline-indicator'}`}></div>
       )}
-    </Avatar>
+    </div>
   );
 };
 

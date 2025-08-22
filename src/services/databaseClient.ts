@@ -85,7 +85,7 @@ class DatabaseClient {
       .from('Message')
       .select(`
         *,
-        sender:User!senderId(id, name)
+        sender:User!senderId(id, name, avatarUrl)
       `)
       .or(`senderId.eq.${authData.user.id},recipientId.eq.${authData.user.id}`)
       .or(`senderId.eq.${contactId},recipientId.eq.${contactId}`)
@@ -195,6 +195,30 @@ class DatabaseClient {
       creatorId: groupData.creatorId,
       memberIds: allMemberIds
     };
+  }
+
+  /**
+   * Update user status in database
+   */
+  async updateUserStatus(userId: string, status: 'online' | 'offline'): Promise<void> {
+    const supabase = createClient();
+    
+    const updateData: any = { status };
+    
+    // Only update lastSeen when going offline, preserve it when coming online
+    if (status === 'offline') {
+      updateData.lastSeen = new Date().toISOString();
+    }
+    
+    const { error } = await supabase
+      .from('User')
+      .update(updateData)
+      .eq('id', userId);
+
+    if (error) {
+      console.error('Error updating user status:', error);
+      throw error;
+    }
   }
 }
 

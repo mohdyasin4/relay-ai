@@ -1,6 +1,4 @@
 # Sensitive environment files
-.env
-.env.*
 !.env.example
 !.env.template
 # Logs
@@ -14,6 +12,7 @@ lerna-debug.log*
 
 node_modules
 dist
+dist.zip
 dist-ssr
 *.local
 
@@ -29,3 +28,4 @@ dist-ssr
 *.sw?
 
 /generated/prisma
+.vercel

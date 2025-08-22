@@ -38,14 +38,13 @@ import { FriendsService } from '../services/friendsService';
 import { AI_PERSONAS } from '../constants';
 import type { User, Invitation } from '../types';
 import { mqttService } from '@/services/mqttService';
-import GoogleContactsService, { type ProcessedContact } from '../services/googleContactsService';
+// Google Contacts removed to avoid test user management
 
 export function NewChatDialog({ currentUser }: { currentUser: User }) {
   const [open, setOpen] = React.useState(false);
   const [searchQuery, setSearchQuery] = React.useState('');
-  const [searchResults, setSearchResults] = React.useState<(User | ProcessedContact)[]>([]);
+  const [searchResults, setSearchResults] = React.useState<User[]>([]);
   const [allUsers, setAllUsers] = React.useState<User[]>([]);
-  const [googleContacts, setGoogleContacts] = React.useState<ProcessedContact[]>([]);
   // const [isSearching, setIsSearching] = React.useState(false);
   const [sendingRequest, setSendingRequest] = React.useState<string | null>(null);
   const [selectedUsers, setSelectedUsers] = React.useState<string[]>([]);
@@ -66,31 +65,9 @@ export function NewChatDialog({ currentUser }: { currentUser: User }) {
       .select('id, name, email, avatarUrl')
       .neq('id', currentUser.id)
       .limit(50);
+    
     setAllUsers(users || []);
-    // Google contacts
-    try {
-      const accessToken = await GoogleContactsService.getGoogleAccessToken();
-      let gContacts: ProcessedContact[] = [];
-      if (accessToken) {
-        gContacts = await GoogleContactsService.getGoogleContacts(accessToken);
-      }
-      setGoogleContacts(gContacts);
-      // Combine users and Google contacts, avoiding duplicates by email
-      const combined: any[] = [...(users || [])];
-      gContacts.forEach(gc => {
-        if (!gc.email || !combined.some(u => u.email === gc.email)) {
-          combined.push({
-            id: gc.id,
-            name: gc.name,
-            email: gc.email || '',
-            avatarUrl: gc.avatarUrl || ''
-          } as User);
-        }
-      });
-      setSearchResults(combined);
-    } catch (e) {
-      setSearchResults(users || []);
-    }
+    setSearchResults(users || []);
   };
 
   const handleUserSelect = (userId: string) => {

@@ -1,3 +1,8 @@
+// Returns time only in HH:mm format
+export function formatTimeOnly(date: Date | string): string {
+  const d = typeof date === 'string' ? new Date(date) : date;
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
   import moment from 'moment';
   import type { Contact } from '../types';
 
@@ -9,10 +14,17 @@
      * Format a timestamp for display in chat messages
      * Shows time for today, "Yesterday" + time for yesterday, or full date for older
      */
-    static formatMessageTime(timestamp: string | Date): string {
+    /**
+     * Format a timestamp for display in chat messages
+     * If timeOnly is true, always returns just the time (e.g., "2:30 PM")
+     * Otherwise, shows time for today, "Yesterday" + time for yesterday, or full date for older
+     */
+    static formatMessageTime(timestamp: string | Date, timeOnly?: boolean): string {
       const messageMoment = DateUtils.getMoment(timestamp);
       const now = moment();
-      
+      if (timeOnly) {
+        return messageMoment.format('h:mm A');
+      }
       if (messageMoment.isSame(now, 'day')) {
         // Today - show just time (e.g., "2:30 PM")
         return messageMoment.format('h:mm A');
@@ -52,6 +64,10 @@
         // Different year - show year (e.g., "2023")
         return messageMoment.format('MMM D, YYYY');
       }
+    }
+    static formatFullDateTime(timestamp: string | Date): string {
+      const messageMoment = DateUtils.getMoment(timestamp);
+      return messageMoment.format('dddd, MMMM D, YYYY [at] h:mm:ss A');
     }
 
     /**

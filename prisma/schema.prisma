@@ -108,7 +108,7 @@
     recipientId      String?
     status           String    @default("sent") // sent, delivered, read
     timestamp        DateTime  @default(now())
-    attachmenturl    String?
+    attachments      Json?    // JSON array of file attachments with type, url, fileName, fileSize, mimeType
     isAiMessage      Boolean   @default(false) // Flag to identify AI messages
     // Forwarding fields
     isForwarded      Boolean   @default(false)

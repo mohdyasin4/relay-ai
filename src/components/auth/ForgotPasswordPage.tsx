@@ -11,22 +11,22 @@ export default function ForgotPasswordPage() {
       icon: Shield,
       title: "Secure Recovery",
       description: "Your password reset is protected with industry-standard encryption and security protocols to ensure your account remains safe.",
-      color: "text-emerald-400",
-      bgColor: "bg-emerald-500/20",
+      color: "text-secondary-foreground",
+      bgColor: "bg-secondary/20",
     },
     {
       icon: Zap,
       title: "Quick Process",
       description: "Get back to your conversations in minutes with our streamlined password recovery system designed for speed and convenience.",
-      color: "text-yellow-400",
-      bgColor: "bg-yellow-500/20",
+      color: "text-accent-foreground",
+      bgColor: "bg-accent/20",
     },
     {
       icon: Users,
       title: "24/7 Support",
       description: "Our dedicated support team is available around the clock to help you regain access to your account and conversations.",
-      color: "text-blue-400",
-      bgColor: "bg-blue-500/20",
+      color: "text-primary-foreground",
+      bgColor: "bg-primary/20",
     },
   ];
 
@@ -63,7 +63,7 @@ export default function ForgotPasswordPage() {
             className="flex items-center gap-3 font-semibold text-xl group transition-all duration-300 hover:scale-105"
           >
             <motion.div
-              className="bg-gradient-to-br from-[#3B37FE] to-[#5B47FF] text-white flex size-8 items-center justify-center rounded-md shadow-lg shadow-[#3B37FE]/25"
+              className="bg-primary text-primary-foreground flex size-8 items-center justify-center rounded-md shadow-lg"
               whileHover={{ rotate: 5, scale: 1.1 }}
               whileTap={{ scale: 0.95 }}
               transition={{ type: "spring", stiffness: 400, damping: 17 }}
@@ -84,7 +84,7 @@ export default function ForgotPasswordPage() {
         >
           <div className="w-full max-w-md">
             <motion.div
-              className="backdrop-blur-sm rounded-2xl p-8 shadow-2xl shadow-black/5"
+              className="bg-card backdrop-blur-sm rounded-2xl p-8 shadow-2xl"
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               transition={{ duration: 0.5, delay: 0.3 }}
@@ -96,17 +96,17 @@ export default function ForgotPasswordPage() {
         </motion.div>
       </motion.div>
 
-      {/* Branding Content (Right Blue Panel) */}
+      {/* Branding Content (Right Panel) */}
       <motion.div 
-        className="bg-gradient-to-br from-[#3B37FE] via-[#4C46FF] to-[#5B47FF] text-white p-10 rounded-2xl m-4 hidden lg:flex flex-col justify-between shadow-2xl shadow-[#3B37FE]/20 relative overflow-hidden"
+        className="bg-primary text-primary-foreground p-10 rounded-2xl m-4 hidden lg:flex flex-col justify-between shadow-2xl relative overflow-hidden"
         initial={{ opacity: 0, x: 20 }}
         animate={{ opacity: 1, x: 0 }}
         transition={{ duration: 0.6, delay: 0.4 }}
       >
         {/* Background decoration */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/10 to-transparent" />
-        <div className="absolute -top-20 -right-20 w-40 h-40 bg-white/10 rounded-full blur-3xl" />
-        <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-white/5 rounded-full blur-2xl" />
+        <div className="absolute inset-0 bg-gradient-to-t from-foreground/10 to-transparent" />
+        <div className="absolute -top-20 -right-20 w-40 h-40 bg-primary-foreground/10 rounded-full blur-3xl" />
+        <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-primary-foreground/5 rounded-full blur-2xl" />
         
         <motion.div 
           className="relative z-10"
@@ -119,7 +119,7 @@ export default function ForgotPasswordPage() {
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.5, delay: 0.6 }}
           >
-            <Badge className="bg-white/20 text-white border-white/30 font-bold tracking-widest uppercase text-xs mb-6 backdrop-blur-sm">
+            <Badge className="bg-primary-foreground/20 text-primary-foreground border-primary-foreground/30 font-bold tracking-widest uppercase text-xs mb-6 backdrop-blur-sm">
               Password Reset
             </Badge>
           </motion.div>
@@ -132,13 +132,13 @@ export default function ForgotPasswordPage() {
           >
             Secure
             <br />
-            <span className="bg-gradient-to-r from-white to-blue-100 bg-clip-text text-transparent">
+            <span className="bg-gradient-to-r from-primary-foreground to-primary-foreground/80 bg-clip-text text-transparent">
               Recovery.
             </span>
           </motion.h1>
           
           <motion.p 
-            className="mt-6 text-blue-100 text-lg leading-relaxed font-medium"
+            className="mt-6 text-primary-foreground/80 text-lg leading-relaxed font-medium"
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.8 }}
@@ -154,7 +154,7 @@ export default function ForgotPasswordPage() {
             transition={{ duration: 0.6, delay: 0.9 }}
           >
             <Card 
-              className="bg-white/10 border-white/20 backdrop-blur-sm shadow-lg transition-all duration-300 hover:bg-white/15"
+              className="bg-primary-foreground/10 border-primary-foreground/20 backdrop-blur-sm shadow-lg transition-all duration-300 hover:bg-primary-foreground/15"
               onMouseEnter={() => setIsPaused(true)}
               onMouseLeave={() => setIsPaused(false)}
             >
@@ -164,8 +164,8 @@ export default function ForgotPasswordPage() {
                   whileHover={{ scale: 1.02 }}
                   transition={{ type: "spring", stiffness: 400, damping: 17 }}
                 >
-                  <Shield className="size-5 text-emerald-300" />
-                  <h3 className="text-xl font-bold text-white">Security First</h3>
+                  <Shield className="size-5 text-primary-foreground" />
+                  <h3 className="text-xl font-bold text-primary-foreground">Security First</h3>
                 </motion.div>
                 
                 {/* Animated Feature Display */}
@@ -196,7 +196,7 @@ export default function ForgotPasswordPage() {
                     >
                       <div className="flex items-start gap-4">
                         <motion.div
-                          className={`p-3 rounded-2xl ${features[currentFeatureIndex].bgColor} ${features[currentFeatureIndex].color} border border-white/10`}
+                          className={`p-3 rounded-2xl ${features[currentFeatureIndex].bgColor} ${features[currentFeatureIndex].color} border border-primary-foreground/10`}
                           whileHover={{ scale: 1.1, rotate: 3 }}
                           transition={{ type: "spring", stiffness: 400, damping: 17 }}
                         >
@@ -207,10 +207,10 @@ export default function ForgotPasswordPage() {
                         </motion.div>
                         
                         <div className="flex-1">
-                          <h4 className="text-xl font-bold text-white mb-2">
+                          <h4 className="text-xl font-bold text-primary-foreground mb-2">
                             {features[currentFeatureIndex].title}
                           </h4>
-                          <p className="text-blue-100 text-base leading-relaxed">
+                          <p className="text-primary-foreground/80 text-base leading-relaxed">
                             {features[currentFeatureIndex].description}
                           </p>
                         </div>
@@ -226,8 +226,8 @@ export default function ForgotPasswordPage() {
                       key={index}
                       className={`relative w-8 h-2 rounded-full transition-all duration-300 ${
                         index === currentFeatureIndex 
-                          ? 'bg-white/20' 
-                          : 'bg-white/10 hover:bg-white/20'
+                          ? 'bg-primary-foreground/20' 
+                          : 'bg-primary-foreground/10 hover:bg-primary-foreground/20'
                       }`}
                       onClick={() => setCurrentFeatureIndex(index)}
                       whileHover={{ scale: 1.1 }}
@@ -236,7 +236,7 @@ export default function ForgotPasswordPage() {
                       {/* Active indicator with progress animation */}
                       {index === currentFeatureIndex && (
                         <motion.div
-                          className="absolute inset-0 bg-white rounded-full origin-left"
+                          className="absolute inset-0 bg-primary-foreground rounded-full origin-left"
                           initial={{ scaleX: 0 }}
                           animate={{ 
                             scaleX: isPaused ? 0 : 1,
@@ -251,7 +251,7 @@ export default function ForgotPasswordPage() {
                       
                       {/* Static dot for inactive states */}
                       <div className={`absolute left-1/2 top-1/2 transform -translate-x-1/2 -translate-y-1/2 w-1 h-1 rounded-full ${
-                        index === currentFeatureIndex ? 'bg-white/80' : 'bg-white/60'
+                        index === currentFeatureIndex ? 'bg-primary-foreground/80' : 'bg-primary-foreground/60'
                       }`} />
                     </motion.button>
                   ))}
