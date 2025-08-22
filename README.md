@@ -2,12 +2,12 @@
 
 <div align="center">
 
-![Relay AI Logo](https://via.placeholder.com/150x150/2563eb/ffffff?text=RelayAI)
+<img height="20%" width="20%" src="https://ik.imagekit.io/yzf6voovx/logos.png?updatedAt=1755874073963"></img>
 
 **A modern, intelligent messaging platform that seamlessly integrates AI assistants with real-time human conversations**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![React](https://img.shields.io/badge/React-18-blue.svg)](https://reactjs.org/)
+[![React](https://img.shields.io/badge/React-19-blue.svg)](https://reactjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue.svg)](https://www.typescriptlang.org/)
 [![Supabase](https://img.shields.io/badge/Supabase-Ready-green.svg)](https://supabase.io/)
 [![AI Powered](https://img.shields.io/badge/AI-Gemini%202.5%20Flash-orange.svg)](https://ai.google.dev/)
@@ -84,23 +84,23 @@
 
 ## 📸 Screenshots
 
-<div align="center">
+<div align="start">
 
-### 🏠 **Modern Dashboard**
-![Dashboard](https://via.placeholder.com/800x500/f8fafc/64748b?text=Dashboard+Screenshot)
+   ## Welcome Screen
+
 *Clean, intuitive interface with organized chat list and AI assistant integration*
+<img width="1920" height="945" alt="image" src="https://github.com/user-attachments/assets/deee2b4e-5338-4d5f-8037-95e762b4914f" />
 
 ### 💬 **AI-Powered Conversations**
-![Chat Interface](https://via.placeholder.com/800x500/f1f5f9/475569?text=Chat+Interface+Screenshot)
+
 *Seamless AI conversations with rich message formatting and file attachments*
+<img width="1920" height="945" alt="image" src="https://github.com/user-attachments/assets/063669b9-8162-4bf1-a205-ccefe5360d2c" />
 
 ### 📱 **Mobile-First Design**
-![Mobile View](https://via.placeholder.com/400x600/e2e8f0/334155?text=Mobile+View+Screenshot)
+
 *Fully responsive design optimized for mobile and tablet devices*
 
-### ⚙️ **Settings & Customization**
-![Settings](https://via.placeholder.com/800x500/f8fafc/64748b?text=Settings+Screenshot)
-*Comprehensive settings panel with theme customization and profile management*
+<img width="348" height="755" alt="image" src="https://github.com/user-attachments/assets/f6852e83-ec26-43ea-bf8d-bde00e8d227f" />
 
 </div>
 
