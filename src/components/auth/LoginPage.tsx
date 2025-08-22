@@ -75,7 +75,7 @@ const features = [
             className="flex items-center gap-3 font-semibold text-xl group transition-all duration-300 hover:scale-105"
           >
             <motion.div
-              className="bg-primary text-foreground flex size-8 items-center justify-center rounded-md shadow-lg shadow-primary/25"
+              className="bg-primary text-white foreground flex size-8 items-center justify-center rounded-md shadow-lg shadow-primary/25"
               whileHover={{ rotate: 5, scale: 1.1 }}
               whileTap={{ scale: 0.95 }}
               transition={{ type: "spring", stiffness: 400, damping: 17 }}
@@ -137,20 +137,20 @@ const features = [
           </motion.div>
           
           <motion.h1 
-            className="text-6xl font-inter font-bold mt-4 leading-tight tracking-tight"
+            className="text-6xl font-inter font-bold mt-4 text-white leading-tight tracking-tight"
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.7 }}
           >
             Conversations.
             <br />
-            <span className="bg-gradient-to-r from-primary-foreground to-primary-foreground/80 bg-clip-text text-transparent">
+            <span className="text-white">
               Reimagined.
             </span>
           </motion.h1>
           
           <motion.p 
-            className="mt-6 text-primary-foreground/80 text-lg leading-relaxed font-medium"
+            className="mt-6 text-foreground/80 text-lg leading-relaxed font-medium"
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.8 }}

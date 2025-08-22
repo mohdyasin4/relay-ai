@@ -285,7 +285,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
         <SidebarMenu>
           <SidebarMenuItem>
             <div className="px-2 pt-2">
-              <Button onClick={onNewGroup} variant="default" className="w-full hidden md:flex" aria-label="Start a new chat">
+              <Button onClick={onNewGroup} variant="default" className="w-full text-white hidden md:flex" aria-label="Start a new chat">
                 <PlusIcon className="w-5 h-5 inline-block mr-1" />
                 New Chat
               </Button>

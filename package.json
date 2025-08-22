@@ -1,7 +1,19 @@
 {
   "name": "relay-ai",
-  "private": true,
+  "description": "Modern AI-powered messaging platform combining intelligent AI assistants with real-time human conversations. Features Google Gemini integration, file sharing, group management, and secure end-to-end encryption.",
   "version": "1.0.0",
+  "keywords": ["ai-chat", "messaging-app", "react", "typescript", "supabase", "gemini-ai", "real-time", "mqtt", "file-sharing", "group-chat"],
+  "author": "Relay AI Team",
+  "license": "MIT",
+  "homepage": "https://github.com/mohdyasin4/relay-ai#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mohdyasin4/relay-ai.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mohdyasin4/relay-ai/issues"
+  },
+  "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",

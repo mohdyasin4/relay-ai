@@ -110,7 +110,7 @@ export default function SignUp() {
             >
               <MessagesSquare className="size-5" />
             </motion.div>
-            <span className="text-foreground font-bold tracking-tight">
+            <span className="text-primary-foreground font-bold tracking-tight">
               Relay
             </span>
           </a>
@@ -166,20 +166,20 @@ export default function SignUp() {
           </motion.div>
 
           <motion.h1
-            className="text-5xl font-bold mt-4 leading-tight tracking-tight"
+            className="text-5xl font-bold mt-4 text-white leading-tight tracking-tight"
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.7 }}
           >
             Start Your
             <br />
-            <span className="bg-gradient-to-r from-primary-foreground to-primary-foreground/80 bg-clip-text text-transparent">
+            <span className="text-white">
               Journey.
             </span>
           </motion.h1>
 
           <motion.p
-            className="mt-6 text-primary-foreground/80 text-lg leading-relaxed font-medium"
+            className="mt-6 text-foreground/80 text-lg leading-relaxed font-medium"
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.8 }}
