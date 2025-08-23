@@ -29,4 +29,5 @@ dist-ssr
 *.sw?
 
 /generated/prisma
+testsprite_tests
 .vercel
