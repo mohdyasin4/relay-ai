@@ -2,7 +2,7 @@
 
 <div align="center">
 
-<img  src="https://ik.imagekit.io/yzf6voovx/og.png?updatedAt=1755881775317"></img>
+<img  src="https://ik.imagekit.io/yzf6voovx/og.png?updatedAt=1756007129109"></img>
 
 **A modern, intelligent messaging platform that seamlessly integrates AI assistants with real-time human conversations**
 
